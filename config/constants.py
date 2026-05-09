@@ -6,18 +6,19 @@
 MAD_WINDOW_YEARS = 3
 MAD_ANOMALY_THRESHOLD = 3  # кол-во стандартных отклонений
 
-# LSI пороги
-LSI_THRESHOLD_CRITICAL = 0.8
-LSI_THRESHOLD_WARNING = 0.6
-LSI_THRESHOLD_NORMAL = 0.4
+# LSI пороги (0-1 scale): GREEN < 0.40, YELLOW 0.40-0.70, RED > 0.70
+LSI_THRESHOLD_CRITICAL = 0.70
+LSI_THRESHOLD_WARNING = 0.40
+LSI_THRESHOLD_NORMAL = 0.40
 
-# Модули (веса)
+# Модули (веса) — M4_TAX не входит: используется как мультипликатор
+# Веса пропорциональны SNR каждого модуля на стресс-эпизодах (Dec 2014, Feb 2022, Aug 2023)
+# SNR: M1=3.62, M2=3.50, M3=1.42, M5=0.82 → сумма=9.36
 MODULES_WEIGHTS = {
-    "M1_RESERVES": 0.25,
-    "M2_REPO": 0.25,
-    "M3_OFZ": 0.20,
-    "M4_TAX": 0.15,
-    "M5_TREASURY": 0.15,
+    "M1_RESERVES": 0.387,
+    "M2_REPO":     0.374,
+    "M3_OFZ":      0.152,
+    "M5_TREASURY": 0.088,
 }
 
 # API timeouts

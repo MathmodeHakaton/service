@@ -1,82 +1,204 @@
-# RU Liquidity Sentinel
+# RU Liquidity Sentinel — Service
 
-Система мониторинга ликвидности рубля на основе анализа ключевых индикаторов из данных ЦБ РФ, Минфина, Росказны и ФНС.
+Бэкенд-сервис системы раннего предупреждения стресса ликвидности рублёвого денежного рынка.
+Построен на принципах **Clean Architecture**: Domain / Infrastructure / Application / Presentation.
 
-## Архитектура
+---
 
-Проект построен на принципах Clean Architecture:
+## Как запустить
 
-- **Infrastructure Layer**: Fetchers, Storage, HTTP Client
-- **Domain Layer**: Entities, Modules, Normalization, Aggregation, LLM
-- **Application Layer**: Pipeline, Backtest, Scheduler
-- **Presentation Layer**: Streamlit UI
-
-## Установка
+### Проверка всех модулей
 
 ```bash
-# Создать виртуальное окружение
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
-
-# Установить зависимости
-pip install -e .
-
-# Установить зависимости для разработки
-pip install -e ".[dev]"
+cd /Users/nikita/Desktop/hack/service
+python3 test_all.py
 ```
 
-## Конфигурация
+Скрипт загружает данные из кэша `../liquidity_sentinel/data/`, тестирует MAD-нормализацию, все 5 модулей, LSIEngine и Pipeline. Должно быть `✓ Все проверки пройдены`.
 
-Скопируйте `.env.example` в `.env` и заполните необходимые значения:
-
-```bash
-cp .env.example .env
-```
-
-## Запуск
-
-### CLI
+### Дашборд Streamlit
 
 ```bash
-# Выполнить пайплайн один раз
-sentinel pipeline run
-
-# Запустить планировщик
-sentinel scheduler start
-
-# Запустить backtesting
-sentinel backtest --start-year 2014 --end-year 2023
-```
-
-### Streamlit UI
-
-```bash
+cd /Users/nikita/Desktop/hack/service
 streamlit run src/presentation/app.py
 ```
 
-## Docker
+Открывается на `http://localhost:8501`. Данные тянутся с cbr.ru, minfin.gov.ru и генерируются из НК РФ (M4). При недоступности сети используется кэш из `../liquidity_sentinel/data/`.
+
+### Установка зависимостей
 
 ```bash
-# Запустить PostgreSQL и Ollama
+pip install -e .
+```
+
+### Docker (PostgreSQL + Ollama для AI-аналитика)
+
+```bash
 docker-compose up -d
-
-# Запустить миграции
-yoyo apply --database $DATABASE_URL migrations/
 ```
 
-## Разработка
+---
 
-```bash
-# Запустить тесты
-pytest
+## Архитектура
 
-# С покрытием кода
-pytest --cov=src
-
-# Форматирование кода
-black .
-isort .
-
-# Проверка типов
-mypy src/
 ```
+service/
+├── src/
+│   ├── domain/
+│   │   ├── modules/          ← M1–M5 (compute() → ModuleSignal)
+│   │   ├── aggregation/      ← LSIEngine
+│   │   ├── normalization/    ← MAD z-score, clip ±10
+│   │   ├── models/           ← ModuleSignal, LSIResult
+│   │   └── llm/              ← PromptBuilder, RAG, LocalModel
+│   │
+│   ├── infrastructure/
+│   │   ├── fetchers/
+│   │   │   ├── cbr.py        ← резервы, RUONIA, репо, ставка, bliquidity
+│   │   │   ├── minfin.py     ← аукционы ОФЗ
+│   │   │   ├── fns.py        ← налоговый календарь по НК РФ
+│   │   │   └── roskazna.py   ← fallback на CBR bliquidity
+│   │   └── storage/          ← Parquet кэш + PostgreSQL
+│   │
+│   ├── application/
+│   │   ├── pipeline.py       ← fetch → compute → aggregate → PipelineResult
+│   │   ├── scheduler.py
+│   │   └── backtest.py
+│   │
+│   └── presentation/
+│       ├── app.py            ← точка входа + роутинг
+│       └── pages/
+│           ├── p1_overview.py   ← LSI gauge + статус + вклад
+│           ├── p2_modules.py    ← детальные графики M1–M5
+│           ├── p3_backtest.py   ← история LSI 2019–сегодня
+│           └── p4_analyst.py   ← AI чат (Ollama)
+│
+├── docs/
+│   ├── obyas_mod1.md         ← почему rel_spread, RUONIA w=1000
+│   ├── obyas_mod2.md         ← почему ставка не объём, окно 30
+│   ├── obyas_mod3.md         ← bid_cover vs cover_ratio, исправление
+│   ├── obyas_mod4.md         ← квартальные события, две эпохи НК РФ
+│   └── obyas_mod5.md         ← инверсия знака, уровень > дельта
+│
+└── tests/
+    ├── unit/
+    └── integration/
+```
+
+---
+
+## Модули
+
+### M1 — Резервы + RUONIA
+`CBRFetcher.fetch_reserves()` + `fetch_ruonia()` + `fetch_keyrate()`
+
+| Сигнал | SNR | Вес |
+|---|---|---|
+| MAD_RUONIA (w=1000) | 4.16 | 0.60 |
+| MAD_rel_spread (w=36 мес.) | 2.82 | 0.40 |
+| Flag_AboveKey | 1.22 | +8 к score |
+
+`rel_spread = (actual − required) / required` — SNR в 4× выше абсолютного.
+
+### M2 — Репо ЦБ (7-дневные)
+`CBRFetcher.fetch_repo()` + `fetch_keyrate()`
+
+- Окно MAD = 30 аукционов (F1=0.650 на дек 2014)
+- Объём исключён: r=−0.693 (ЦБ управляет лимитом)
+- Flag_Demand при MAD > 3.5
+
+### M3 — ОФЗ Минфин
+`MinfinFetcher.fetch_ofz()`
+
+- `cover_ratio = demand / placement` (не demand/offer — исправлено!)
+- `bid_cover = demand / offer` — объёмный (норма < 1.0 для РФ)
+
+### M4 — Налоговый период
+`FNSFetcher.generate_tax_calendar()` (сайт ФНС не парсится — JS)
+
+- 2014–2027, 448 событий, две эпохи (до/после ЕНП 2023)
+- Tax_Week — только квартальные (НДС + Прибыль), охват ~33%
+- Seasonal_Factor — мультипликатор ×1.4/1.2/1.1
+
+### M5 — Баланс ликвидности
+`CBRFetcher.fetch_bliquidity()` (Росказна SSL недоступна)
+
+- **Инвертирован**: `score = sigmoid(−MAD)` — дефицит = стресс
+- MAD_ЦБ SNR=0.92 (вес 88%), MAD_delta SNR=0.12 (вес 12%)
+
+---
+
+## LSI — агрегационный слой
+
+### Метод агрегации и интерпретируемость
+
+ТЗ требует: _«вывод системы должен быть интерпретируемым — для каждого значения LSI показать вклад каждого модуля в итоговый сигнал»_. Выбран вариант ТЗ **«Взвешенная сумма → явная формула с весами»**.
+
+Преимущество перед SHAP/PCA: формула полностью прозрачна, вклад каждого модуля виден напрямую без постобработки. Дашборд показывает пошаговое вычисление в реальном времени (раздел «📐 Методология агрегации»).
+
+### Формула
+
+```
+LSI = (M1×0.387 + M2×0.374 + M3×0.152 + M5×0.088) × SF_M4
+```
+
+GREEN < 40 · YELLOW 40–70 · RED > 70
+
+### Вклад каждого модуля
+
+Для каждого текущего значения LSI вклад модуля = `score_модуля × вес`. Сумма вкладов до умножения на SF_M4 = base LSI. Дашборд отображает это явно на главной странице в карточках и баре.
+
+### Откуда берутся веса
+
+Веса пропорциональны **SNR (Signal-to-Noise Ratio)** каждого модуля, рассчитанному на трёх стресс-эпизодах: декабрь 2014, февраль 2022, август 2023. SNR = |медиана в стресс| / стд.откл. в норме — показывает насколько хорошо сигнал отличает стресс от нормы.
+
+| Модуль | Сигналы (внутренние веса) | SNR | Вес LSI |
+|--------|--------------------------|-----|---------|
+| M1 Резервы + RUONIA | 0.6×RUONIA(4.16) + 0.4×rel_spread(2.82) | **3.62** | **0.387** |
+| M2 Репо ЦБ | rate_spread, F1=0.650 на Dec 2014 | **3.50** | **0.374** |
+| M3 ОФЗ | 0.65×bid_cover(1.63) + 0.35×yield(1.02) | **1.42** | **0.152** |
+| M4 Налоги | детерминировано | мультипликатор | — |
+| M5 Казначейство | 0.88×balance(0.92) + 0.12×delta(0.12) | **0.82** | **0.088** |
+| **Сумма SNR** | | **9.36** | **1.000** |
+
+**M1 и M2 вместе дают ~76%** — они быстрее и точнее сигнализируют о стрессе. RUONIA и репо-ставка — прямые рыночные индикаторы дефицита ликвидности, реагируют в течение дня.
+
+**M3 (0.152)** — аукционы ОФЗ раз в неделю, косвенный сигнал через спрос на госбумаги.
+
+**M5 (0.088)** — структурный баланс всего сектора реагирует медленнее и подвержен режим-сдвигам (2019–2021 дефицит → 2022–2026 профицит).
+
+### Почему M4 — мультипликатор, а не слагаемое
+
+M4 не измеряет стресс сам по себе: налоги в конце квартала — не кризис. Он усиливает сигналы других модулей. Если уже есть напряжение в репо (M2 высокий) и наступает конец квартала — реальное давление выше. Если рынок спокоен — SF_M4 = 1.0 и ничего не меняет.
+
+| Ситуация | SF_M4 |
+|----------|-------|
+| Норма | 1.0 |
+| Налоговая неделя (квартальные налоги ±7 дней) | 1.1 |
+| Конец месяца (последние 3 дня) | 1.2 |
+| Конец квартала (март/июнь/сентябрь/декабрь, последние 3 дня) | 1.4 |
+
+---
+
+## Ключевые исправления (vs заглушки)
+
+1. **MAD**: `mean()` → `median()` с 1.4826, clip ±10
+2. **M3 cover**: `demand/offer` → `demand/placement`
+3. **M5 знак**: профицит теперь = низкий score (было 85%!)
+4. **M4 Tax_Week**: квартальные события (было 85% охват)
+5. **M1 rel_spread**: SNR 0.70 → 2.82
+
+---
+
+## Объяснения выбора данных
+
+- `docs/obyas_mod1.md` — М1
+- `docs/obyas_mod2.md` — М2
+- `docs/obyas_mod3.md` — М3
+- `docs/obyas_mod4.md` — М4
+- `docs/obyas_mod5.md` — М5
+
+---
+
+## Контактное лицо
+
+Башлыков Никита Валерьевич — bashlykovnv@mail.ru / @Povid1o

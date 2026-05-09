@@ -4,29 +4,23 @@
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any
-from ..models.module_signal import ModuleSignal
+
+import pandas as pd
 
 
 class BaseModule(ABC):
-    """Абстрактный базовый класс модуля анализа"""
 
     def __init__(self, name: str, weight: float = 0.2):
-        self.name = name
+        self.name   = name
         self.weight = weight
 
     @abstractmethod
-    def compute(self, data: Dict[str, Any]) -> ModuleSignal:
+    def compute(self, data: Dict[str, Any]) -> pd.DataFrame:
         """
-        Вычислить сигнал на основе данных
-
-        Args:
-            data: словарь с данными от fetchers
+        Вычислить признаки модуля из сырых данных.
 
         Returns:
-            ModuleSignal: сигнал модуля
+            pd.DataFrame с колонкой 'date' и признаками по ТЗ.
+            Пустой DataFrame если данных нет.
         """
         pass
-
-    def _validate_data(self, data: Dict[str, Any]) -> bool:
-        """Валидация входных данных"""
-        return data is not None and len(data) > 0
