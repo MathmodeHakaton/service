@@ -14,3 +14,4 @@ class FetcherResult:
     last_updated: datetime
     status: str  # "success", "partial", "error"
     error_message: Optional[str] = None
+    source_url: Optional[str] = None
