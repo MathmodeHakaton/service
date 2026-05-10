@@ -12,9 +12,7 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = os.getenv(
-        "DATABASE_URL",
-        "postgresql://user:password@localhost:5432/ru_liquidity_sentinel"
-    )
+        "DATABASE_URL", "postgresql://localhost:5432/postgres")
 
     # APIs
     cbr_api_base_url: str = "https://www.cbr.ru/dev/api/"
