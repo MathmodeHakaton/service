@@ -73,8 +73,11 @@ class M2Repo(BaseModule):
 
         df["MAD_score_rate_spread"] = mad_normalize(df["rate_spread"], window=MAD_WINDOW)
         df["MAD_score_cover"]       = mad_normalize(df["utilization"], window=MAD_WINDOW)
+        # Флаг только когда окно заполнено минимум наполовину (MAD_WINDOW//2 точек)
+        # Защита от ложных срабатываний при малом окне в начале ряда
+        row_num = df["MAD_score_rate_spread"].notna().cumsum()
         df["Flag_Demand"] = (
-            (df["utilization"].fillna(0) > FLAG_COVER_THRESHOLD) |
-            (df["MAD_score_rate_spread"].fillna(0) > FLAG_DEMAND_THRESHOLD)
+            (df["MAD_score_rate_spread"].fillna(0) > FLAG_DEMAND_THRESHOLD) &
+            (row_num >= MAD_WINDOW // 2)
         ).astype(int)
         return df

@@ -452,14 +452,14 @@ with tab1:
         fig1b = go.Figure()
         fig1b.add_trace(go.Scatter(
             x=df1["date"], y=df1["MAD_score_RUONIA"],
-            name="MAD_score_RUONIA (аномалия ставки, вес 60%)",
+            name="MAD_score_RUONIA — аномалия ставки межбанка",
             line=dict(color="crimson", width=1.8),
         ))
         # ТЗ: MAD_score_спред (ранее MAD_score_rel_spread)
         if "MAD_score_спред" in df1.columns:
             fig1b.add_trace(go.Scatter(
                 x=df1["date"], y=df1["MAD_score_спред"],
-                name="MAD_score_спред (аномалия запаса, вес 40%)",
+                name="MAD_score_спред — аномалия запаса резервов",
                 line=dict(color="steelblue", width=1.5),
             ))
         if "Flag_AboveKey" in df1.columns:
@@ -473,12 +473,12 @@ with tab1:
         fig1b.add_hline(y=0, line_color="gray", line_dash="dot", line_width=0.8)
         fig1b.add_hrect(y0=2, y1=11, fillcolor="red", opacity=0.04)
         fig1b.update_layout(
-            title="М1: MAD-сигналы (признаки по ТЗ)",
+            title="М1: MAD-сигналы",
             yaxis=dict(title="Отклонение от нормы (σ)", range=[-5, 11]),
             height=300, legend=dict(x=0, y=1.15, orientation="h"),
         )
         st.plotly_chart(fig1b, use_container_width=True)
-        st.caption("MAD_score_RUONIA и MAD_score_спред — признаки M1 по ТЗ. 0 = норма · +3σ = стресс")
+        st.caption("MAD_score_RUONIA и MAD_score_спред. 0 = норма · +3σ = стресс")
 
 # ── М2 ────────────────────────────────────────────────────────────
 with tab2:
@@ -516,18 +516,7 @@ with tab2:
         )
         st.plotly_chart(fig2, use_container_width=True)
 
-    if not df2.empty and "MAD_score_cover" in df2.columns:
-        fig2b = go.Figure()
-        fig2b.add_trace(go.Scatter(
-            x=df2["date"], y=df2["MAD_score_cover"],
-            name="MAD_score_cover (утилизация лимита ЦБ)",
-            line=dict(color="purple", width=1.5),
-        ))
-        fig2b.add_hline(y=0, line_color="gray", line_dash="dot")
-        fig2b.update_layout(title="М2: MAD_score_cover (признак по ТЗ)",
-                            yaxis_title="Отклонение (σ)", height=220, showlegend=False)
-        st.plotly_chart(fig2b, use_container_width=True)
-        st.caption("MAD_score_cover и MAD_score_rate_spread — признаки M2 по ТЗ.")
+    st.caption("Основной сигнал M2 — MAD_score_rate_spread (переплата над ключевой ставкой).")
 
 # ── М3 ────────────────────────────────────────────────────────────
 with tab3:
@@ -536,29 +525,49 @@ with tab3:
     st.caption("Источник: Министерство финансов РФ — результаты аукционов ОФЗ")
 
     if df3 is not None and not df3.empty and "cover_ratio" in df3.columns:
-        auctions3 = df3.dropna(subset=["cover_ratio"])
+        auctions3 = df3.dropna(subset=["cover_ratio"]).copy().reset_index(drop=True)
         if len(auctions3):
+            # Два аукциона в один день → разносим по оси x на ±0.3 дня
+            auctions3["rank"] = auctions3.groupby("date").cumcount()
+            auctions3["n_per_day"] = auctions3.groupby("date")["rank"].transform("count")
+            auctions3["x_offset"] = auctions3.apply(
+                lambda r: pd.Timedelta(days=-0.3) if r["n_per_day"] > 1 and r["rank"] == 0
+                else (pd.Timedelta(days=0.3) if r["n_per_day"] > 1 and r["rank"] == 1
+                else pd.Timedelta(0)), axis=1
+            )
+            auctions3["x"] = auctions3["date"] + auctions3["x_offset"]
+
             colors3 = [
                 "crimson"   if c < 1.2 else
-                "steelblue" if c > 2.0 else "#888888"
+                "steelblue" if c > 2.0 else
+                "#aaaaaa"
                 for c in auctions3["cover_ratio"]
             ]
             fig3 = go.Figure()
             fig3.add_trace(go.Bar(
-                x=auctions3["date"], y=auctions3["cover_ratio"],
-                name="cover_ratio = спрос / размещение",
+                x=auctions3["x"],
+                y=auctions3["cover_ratio"],
                 marker_color=colors3,
+                width=[1000 * 3600 * 24 * 0.55] * len(auctions3),  # ширина 0.55 дня в мс
+                showlegend=False,
             ))
-            fig3.add_hline(y=1.2, line_dash="dash", line_color="red",
-                           annotation_text="Flag_Nedospros < 1.2")
-            fig3.add_hline(y=2.0, line_dash="dash", line_color="steelblue",
-                           annotation_text="Flag_Perespros > 2.0")
+            fig3.add_hline(y=1.2, line_dash="dash", line_color="orange", line_width=1.5,
+                           annotation_text="< 1.2 недоспрос", annotation_position="right")
+            fig3.add_hline(y=2.0, line_dash="dash", line_color="steelblue", line_width=1.5,
+                           annotation_text="> 2.0 переспрос", annotation_position="right")
             fig3.update_layout(
-                title="М3: Cover ratio аукционов ОФЗ (MAD_score_cover по ТЗ)",
-                yaxis_title="Покрытие (спрос / размещение)",
-                height=300, showlegend=False,
+                title="М3: Cover ratio аукционов ОФЗ (спрос / размещение)",
+                yaxis_title="cover_ratio",
+                xaxis=dict(type="date"),
+                height=320,
             )
             st.plotly_chart(fig3, use_container_width=True)
+            st.markdown(
+                "🔴 Недоспрос (< 1.2) &nbsp;&nbsp; "
+                "🔵 Переспрос (> 2.0) &nbsp;&nbsp; "
+                "⚪ Норма (1.2 – 2.0)"
+            )
+            st.caption("Два столбика на дату = два выпуска ОФЗ в один день. cover_ratio = спрос / размещение.")
 
         if "avg_yield" in df3.columns:
             fig3b = go.Figure()
@@ -567,12 +576,12 @@ with tab3:
                 line=dict(color="darkorange", width=2),
             ))
             fig3b.update_layout(
-                title="М3: Доходность ОФЗ (MAD_score_yield_spread по ТЗ)",
+                title="М3: Доходность ОФЗ",
                 yaxis_title="Доходность, % годовых",
                 height=240, showlegend=False,
             )
             st.plotly_chart(fig3b, use_container_width=True)
-            st.caption("MAD_score_cover и MAD_score_yield_spread — признаки M3 по ТЗ.")
+            st.caption("MAD_score_cover и MAD_score_yield_spread.")
     else:
         st.info("Нет данных ОФЗ — нужны результаты аукционов Минфина")
 
@@ -612,7 +621,7 @@ with tab4:
             height=300, showlegend=False,
         )
         st.plotly_chart(fig4, use_container_width=True)
-        st.caption("Признаки M4 по ТЗ: Tax_Week_Flag · End_of_Month_Flag · End_of_Quarter_Flag · Seasonal_Factor")
+        st.caption("Tax_Week_Flag · End_of_Month_Flag · End_of_Quarter_Flag · Seasonal_Factor")
 
 # ── М5 ────────────────────────────────────────────────────────────
 with tab5:
@@ -653,24 +662,24 @@ with tab5:
         if "MAD_score_ЦБ" in df5.columns:
             fig5b.add_trace(go.Scatter(
                 x=df5["date"], y=df5["MAD_score_ЦБ"],
-                name="MAD_score_ЦБ (уровень баланса, вес 88%)",
+                name="MAD_score_ЦБ — уровень баланса",
                 line=dict(color="steelblue", width=1.8),
             ))
-        # ТЗ: MAD_score_Росказна (ранее MAD_score_delta)
         if "MAD_score_Росказна" in df5.columns:
             fig5b.add_trace(go.Scatter(
                 x=df5["date"], y=df5["MAD_score_Росказна"],
-                name="MAD_score_Росказна (оттоки казначейства, вес 12%)",
+                name="MAD_score_Росказна — оттоки казначейства",
                 line=dict(color="gray", width=1.2, dash="dot"),
             ))
-        fig5b.add_hline(y=0, line_color="gray", line_dash="dot")
+        fig5b.add_hline(y=0, line_color="gray", line_dash="dot",
+                        annotation_text="историческая норма", annotation_position="right")
         fig5b.update_layout(
-            title="М5: MAD-признаки по ТЗ",
-            yaxis_title="Отклонение (σ)",
+            title="М5: MAD-сигналы",
+            yaxis_title="Отклонение от нормы (σ)",
             height=260, legend=dict(x=0, y=1.18, orientation="h"),
         )
         st.plotly_chart(fig5b, use_container_width=True)
-        st.caption("MAD_score_ЦБ и MAD_score_Росказна — признаки M5 по ТЗ.")
+        st.caption("0 = норма · >0 дефицит (стресс) · <0 профицит (норма)")
 
 # ── Backtest ──────────────────────────────────────────────────────
 with tab6:

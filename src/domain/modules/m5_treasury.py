@@ -21,7 +21,8 @@ from .base import BaseModule
 from ..normalization.mad import mad_normalize
 
 MAD_WINDOW      = 260
-DRAIN_THRESHOLD = 500.0
+WEEKLY_WINDOW   = 156     # 3 года в неделях (по ТЗ: скользящее окно 3 года)
+DRAIN_THRESHOLD = 500.0   # пик оттока > 500 млрд/нед (ТЗ: 300–500 млрд)
 
 TZ_COLUMNS = ["date", "MAD_score_ЦБ", "MAD_score_Росказна", "Flag_Budget_Drain"]
 
@@ -52,25 +53,55 @@ class M5Treasury(BaseModule):
 
     def _calculate(self, bliq_df: pd.DataFrame) -> pd.DataFrame:
         df = bliq_df.copy().sort_values("date").reset_index(drop=True)
+        df["date"] = pd.to_datetime(df["date"])
 
         bal_col = "structural_balance_bln" if "structural_balance_bln" in df.columns else "balance"
         if bal_col not in df.columns:
             return pd.DataFrame()
 
-        df["balance"]      = pd.to_numeric(df[bal_col], errors="coerce")
-        df["weekly_delta"] = df["balance"].diff(periods=5)
+        df["balance"] = pd.to_numeric(df[bal_col], errors="coerce")
 
+        # MAD_score_ЦБ: уровень структурного баланса на дневных данных
         df["MAD_score_ЦБ"] = mad_normalize(df["balance"], window=MAD_WINDOW)
 
-        # MAD_score_Росказна: proxy — оттоки казначейства (delta > 0 = баланс растёт = банки теряют ликвидность)
-        roskazna_flows         = df["weekly_delta"].clip(lower=0)
-        df["MAD_score_Росказна"] = mad_normalize(roskazna_flows, window=MAD_WINDOW)
+        # MAD_score_Росказна: proxy через еженедельную дельту баланса.
+        # Проблема старого кода: diff(5) на дневных данных + clip(0) → медиана≈0 →
+        # MAD≈0 → z-score взрывается. Фикс: ресемплируем к неделям, берём diff(1),
+        # не клипируем — тогда медиана ≠ 0, MAD осмысленный.
+        # Недельный ряд: берём последнее значение каждой недели
+        df_w = (
+            df.set_index("date")["balance"]
+            .resample("W").last()
+            .dropna()
+            .reset_index()
+        )
+        df_w.columns = ["date", "balance"]
+        df_w["weekly_delta"] = df_w["balance"].diff(1)
+        # Полный знаковый ряд: + = отток (стресс), − = приток (норма)
+        df_w["MAD_score_Росказна"] = mad_normalize(df_w["weekly_delta"], window=WEEKLY_WINDOW)
+        df_w["_week"] = df_w["date"].dt.to_period("W")
 
-        # Flag_Budget_Drain: только пики оттока (локальные максимумы > порога),
-        # не весь период превышения. distance=5 → один пик на эпизод.
+        # Flag_Budget_Drain: пики оттока > 500 млрд/нед (ТЗ: 300–500).
+        # distance=8 → минимум 2 месяца между пиками (исключает кластеры внутри квартала).
         from scipy.signal import find_peaks
-        delta_vals = df["weekly_delta"].fillna(0).values
-        peaks, _   = find_peaks(delta_vals, height=DRAIN_THRESHOLD, distance=5)
-        df["Flag_Budget_Drain"] = 0
-        df.loc[peaks, "Flag_Budget_Drain"] = 1
+        delta_vals = df_w["weekly_delta"].fillna(0).values
+        peaks, _   = find_peaks(delta_vals, height=DRAIN_THRESHOLD, distance=8)
+
+        # Для каждого пика находим последний рабочий день той же недели в дневном ряду.
+        # Флаг ставим на ОДИН день (не на всю неделю) — иначе 5 маркеров на графике.
+        drain_dates = set()
+        for idx in peaks:
+            peak_sunday = df_w.loc[idx, "date"]
+            week_start  = peak_sunday - pd.Timedelta(days=6)
+            week_days   = df[(df["date"] >= week_start) & (df["date"] <= peak_sunday)]["date"]
+            if not week_days.empty:
+                drain_dates.add(week_days.iloc[-1])
+
+        # Мержим MAD_score_Росказна на дневной индекс по периоду недели
+        df["_week"] = df["date"].dt.to_period("W")
+        df_w["_week"] = df_w["date"].dt.to_period("W")
+        df = df.merge(df_w[["_week", "MAD_score_Росказна"]], on="_week", how="left")
+        df["Flag_Budget_Drain"] = df["date"].isin(drain_dates).astype(int)
+        df.drop(columns=["_week"], inplace=True)
+
         return df

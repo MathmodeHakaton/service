@@ -1,0 +1,3 @@
+roskazna.gov.ru использует российский корневой SSL.
+Парсинг недоступен из стандартного Python/requests.
+Proxy: m5_bliquidity.csv (структурный баланс ЦБ РФ — ground truth по ТЗ).
