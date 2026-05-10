@@ -2,6 +2,9 @@
 Константы приложения
 """
 
+from datetime import timedelta
+
+
 # MAD (Mean Absolute Deviation) параметры
 MAD_WINDOW_YEARS = 3
 MAD_ANOMALY_THRESHOLD = 3  # кол-во стандартных отклонений
@@ -29,3 +32,13 @@ RETRY_DELAY_SECONDS = 5
 # Кэш
 CACHE_TTL_HOURS = 24
 SAMPLE_SIZE_FOR_TESTS = 100
+
+
+CACHE_TTL = {
+    "minfin_ofz":        timedelta(hours=12),
+    "cbr_repo":          timedelta(hours=6),
+    "cbr_reserves":      timedelta(hours=24),
+    "cbr_ruonia":        timedelta(hours=6),
+    "roskazna_eks":      timedelta(hours=24),
+    "fns_tax_calendar":  timedelta(days=7),
+}

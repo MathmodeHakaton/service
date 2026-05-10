@@ -1,0 +1,31 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Установка зависимостей
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Копируем зависимости
+COPY pyproject.toml ./
+COPY uv.lock ./
+
+# Устанавливаем зависимости
+RUN pip install --upgrade pip && \
+    pip install -e .
+
+# Копируем код приложения
+COPY . .
+
+# Создаем директорию для Streamlit cache
+RUN mkdir -p /root/.streamlit
+
+# Копируем конфиг Streamlit
+COPY .streamlit/config.toml /root/.streamlit/
+
+# Streamlit port
+EXPOSE 8501
+
+# Запуск приложения
+CMD ["streamlit", "run", "src/presentation/app.py", "--server.port=8501"]
