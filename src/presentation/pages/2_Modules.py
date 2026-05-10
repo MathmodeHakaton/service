@@ -4,6 +4,7 @@
 
 import streamlit as st
 from src.application.pipeline import Pipeline
+from src.infrastructure.storage.db.engine import get_session
 
 
 def show():
@@ -11,25 +12,33 @@ def show():
 
     st.header("🔍 Детализация модулей")
 
-    pipeline = Pipeline()
+    session = next(get_session())
+    try:
+        pipeline = Pipeline(session=session)
 
-    # Получить сигналы от всех модулей
-    data = pipeline._fetch_data()
-    signals = pipeline._compute_module_signals(data)
+        # Получить сигналы от всех модулей
+        data = pipeline._fetch_all()
+        signals_df = pipeline._compute_signals(data)
 
-    # Показать карточку для каждого модуля
-    for signal in signals:
-        with st.expander(f"**{signal.module_name}** - {signal.latest_flag.upper()}"):
-            col1, col2, col3 = st.columns(3)
+        # Показать карточку для каждого модуля
+        for module_name, signal_df in signals_df.items():
+            if signal_df.empty:
+                continue
 
-            with col1:
-                st.metric("Значение", f"{signal.value:.2%}")
+            with st.expander(f"**{module_name}**"):
+                # Показать последнее значение
+                if not signal_df.empty:
+                    last_row = signal_df.iloc[-1]
+                    col1, col2 = st.columns(2)
 
-            with col2:
-                st.metric("Флаг", signal.latest_flag)
+                    with col1:
+                        st.metric("Дата", last_row.get("date", "N/A"))
 
-            with col3:
-                st.metric("Вклад", f"{signal.contribution:.2%}")
+                    with col2:
+                        st.metric("Строк", len(signal_df))
 
-            # Тренд
-            st.line_chart(signal.mad_scores)
+                # Тренд
+                st.line_chart(signal_df.set_index("date")
+                              if "date" in signal_df.columns else signal_df)
+    finally:
+        session.close()
