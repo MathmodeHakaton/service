@@ -40,7 +40,7 @@ class Scheduler:
 
     def _run_pipeline(self):
         """Выполнить пайплайн и сохранить снапшот в БД"""
-        session = next(get_session())
+        session = get_session()
         try:
             result = Pipeline(session=session).execute()
             logger.info(

@@ -2,13 +2,13 @@
 RU Liquidity Sentinel — Streamlit Dashboard
 Запуск: streamlit run src/presentation/app.py --server.port 8501
 """
+import streamlit as st
+import plotly.graph_objects as go
+import pandas as pd
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-import pandas as pd
-import plotly.graph_objects as go
-import streamlit as st
 
 st.set_page_config(
     page_title="RU Liquidity Sentinel",
@@ -25,24 +25,25 @@ st.set_page_config(
 def load_all():
     from src.application.pipeline import Pipeline
     from src.domain.modules.m1_reserves import M1Reserves
-    from src.domain.modules.m2_repo     import M2Repo
-    from src.domain.modules.m3_ofz      import M3OFZ
-    from src.domain.modules.m4_tax      import M4Tax
+    from src.domain.modules.m2_repo import M2Repo
+    from src.domain.modules.m3_ofz import M3OFZ
+    from src.domain.modules.m4_tax import M4Tax
     from src.domain.modules.m5_treasury import M5Treasury
     from src.domain.aggregation.lsi_engine import LSIEngine
     from src.infrastructure.storage.db.engine import get_session
     from datetime import datetime
 
     # ── Сбор данных через pipeline ──────────────────────────────────────
-    session = next(get_session())
+    session = get_session()
     try:
-        p      = Pipeline(session=session)
+        p = Pipeline(session=session)
         result = p.execute_full()
-        data   = result.raw_data
+        data = result.raw_data
 
         # Fallback: ОФЗ из локального кэша если Минфин недоступен
         if not data.get("ofz") is not None and not data.get("ofz", pd.DataFrame()).empty:
-            import json, os
+            import json
+            import os
             cache_path = os.path.normpath(os.path.join(
                 os.path.dirname(__file__),
                 "../../../liquidity_sentinel/data/m3/m3_data.json"
@@ -51,16 +52,22 @@ def load_all():
                 with open(cache_path, encoding="utf-8") as f:
                     raw = json.load(f)
                 ofz_cached = pd.DataFrame(raw["auctions"])
-                ofz_cached["date"] = pd.to_datetime(ofz_cached["date"], errors="coerce")
+                ofz_cached["date"] = pd.to_datetime(
+                    ofz_cached["date"], errors="coerce")
                 for col in ["offer_volume", "demand_volume", "placement_volume",
                             "avg_yield", "cover_ratio"]:
                     if col in ofz_cached.columns:
-                        ofz_cached[col] = pd.to_numeric(ofz_cached[col], errors="coerce")
-                data["ofz"] = ofz_cached.dropna(subset=["date"]).reset_index(drop=True)
+                        ofz_cached[col] = pd.to_numeric(
+                            ofz_cached[col], errors="coerce")
+                data["ofz"] = ofz_cached.dropna(
+                    subset=["date"]).reset_index(drop=True)
 
         # ── Модули: полные DataFrame для графиков ────────────────────────────
-        m1 = M1Reserves(); m2 = M2Repo(); m3 = M3OFZ()
-        m4 = M4Tax();      m5 = M5Treasury()
+        m1 = M1Reserves()
+        m2 = M2Repo()
+        m3 = M3OFZ()
+        m4 = M4Tax()
+        m5 = M5Treasury()
 
         # _calculate() возвращает расширенный DataFrame (все колонки для графиков)
         df1 = m1._calculate(data.get("reserves", pd.DataFrame()),
@@ -70,20 +77,24 @@ def load_all():
                             data.get("keyrate",     pd.DataFrame()),
                             data.get("repo_params", pd.DataFrame()))
         ofz_raw = data.get("ofz", pd.DataFrame())
-        df3 = m3._calculate(ofz_raw) if ofz_raw is not None and not ofz_raw.empty and "date" in ofz_raw.columns else pd.DataFrame()
+        df3 = m3._calculate(
+            ofz_raw) if ofz_raw is not None and not ofz_raw.empty and "date" in ofz_raw.columns else pd.DataFrame()
         df5 = m5._calculate(data.get("bliquidity", pd.DataFrame()))
 
-        tax_df      = data.get("tax_calendar", pd.DataFrame())
+        tax_df = data.get("tax_calendar", pd.DataFrame())
         target_date = datetime.now()
 
         # M4: полный ряд для графика + флаги на сегодня
-        dates_range = pd.date_range("2019-01-01", pd.Timestamp.today(), freq="D")
-        df4 = m4.compute_series(pd.Series(dates_range), tax_df) if not tax_df.empty else pd.DataFrame()
-        m4_today = m4.compute({"tax_calendar": tax_df, "target_date": target_date})
+        dates_range = pd.date_range(
+            "2019-01-01", pd.Timestamp.today(), freq="D")
+        df4 = m4.compute_series(pd.Series(dates_range),
+                                tax_df) if not tax_df.empty else pd.DataFrame()
+        m4_today = m4.compute(
+            {"tax_calendar": tax_df, "target_date": target_date})
         latest_m4 = m4_today.iloc[-1].to_dict() if not m4_today.empty else {}
 
         # ── LSI из нового engine (принимает Dict[str, DataFrame]) ───────────
-        engine     = LSIEngine()
+        engine = LSIEngine()
         signal_dfs = result.signals   # Dict[str, pd.DataFrame] из pipeline
         lsi_result = result.lsi       # уже посчитан в pipeline
 
@@ -96,7 +107,8 @@ def load_all():
 
         l1 = _latest(df1, "MAD_score_RUONIA")
         l2 = _latest(df2, "MAD_score_rate_spread")
-        l3 = _latest(df3, "MAD_score_cover") if df3 is not None and not df3.empty else {}
+        l3 = _latest(
+            df3, "MAD_score_cover") if df3 is not None and not df3.empty else {}
         l5 = _latest(df5, "MAD_score_ЦБ")
 
         scores = {
@@ -126,7 +138,8 @@ def load_all():
 
         return ({"signals_df": df1, "latest": l1},
                 {"signals_df": df2, "latest": l2},
-                {"signals_df": df3 if df3 is not None else pd.DataFrame(), "latest": l3},
+                {"signals_df": df3 if df3 is not None else pd.DataFrame(),
+                 "latest": l3},
                 {"signals_df": df4, "latest": latest_m4, "tax_df": tax_df},
                 {"signals_df": df5, "latest": l5},
                 lsi, bt)
@@ -139,8 +152,8 @@ def _build_backtest(data: dict, engine=None) -> pd.DataFrame | None:
     try:
         import numpy as np
         from src.domain.modules.m1_reserves import M1Reserves
-        from src.domain.modules.m2_repo     import M2Repo
-        from src.domain.modules.m4_tax      import M4Tax
+        from src.domain.modules.m2_repo import M2Repo
+        from src.domain.modules.m4_tax import M4Tax
         from src.domain.modules.m5_treasury import M5Treasury
         from src.domain.aggregation.lsi_engine import LSIEngine
 
@@ -177,7 +190,8 @@ def _build_backtest(data: dict, engine=None) -> pd.DataFrame | None:
         tax_df = data.get("tax_calendar", pd.DataFrame())
 
         # Основная сетка: дни из M5
-        base = df5[["date", "MAD_score_ЦБ", "MAD_score_Росказна", "Flag_Budget_Drain"]].copy()
+        base = df5[["date", "MAD_score_ЦБ",
+                    "MAD_score_Росказна", "Flag_Budget_Drain"]].copy()
 
         # M1 → по месяцу
         if not df1.empty:
@@ -185,8 +199,9 @@ def _build_backtest(data: dict, engine=None) -> pd.DataFrame | None:
                                    "Flag_AboveKey", "Flag_EndOfPeriod"] if c in df1.columns]
             df1_m = df1[m1_cols].copy()
             df1_m["month"] = df1["date"].dt.to_period("M")
-            base["month"]  = base["date"].dt.to_period("M")
-            base = base.merge(df1_m, on="month", how="left").drop(columns="month")
+            base["month"] = base["date"].dt.to_period("M")
+            base = base.merge(df1_m, on="month", how="left").drop(
+                columns="month")
 
         # M2 → merge asof
         if not df2.empty:
@@ -194,7 +209,7 @@ def _build_backtest(data: dict, engine=None) -> pd.DataFrame | None:
                 base.sort_values("date"),
                 df2.rename(columns={"MAD_score_rate_spread": "M2_MAD_rate",
                                     "Flag_Demand":           "M2_Flag"})
-                   .sort_values("date"),
+                .sort_values("date"),
                 on="date", direction="backward",
             )
 
@@ -202,7 +217,8 @@ def _build_backtest(data: dict, engine=None) -> pd.DataFrame | None:
         if tax_df is not None and not tax_df.empty:
             tax_df["date"] = pd.to_datetime(tax_df["date"])
             df4 = m4.compute_series(base["date"], tax_df)
-            base = base.merge(df4[["date", "Seasonal_Factor"]], on="date", how="left")
+            base = base.merge(
+                df4[["date", "Seasonal_Factor"]], on="date", how="left")
         base["Seasonal_Factor"] = base.get(
             "Seasonal_Factor", pd.Series(1.0, index=base.index)
         ).fillna(1.0)
@@ -228,11 +244,12 @@ def _build_backtest(data: dict, engine=None) -> pd.DataFrame | None:
             s5 = engine._score_m5(r5)
             sf = float(row.get("Seasonal_Factor", 1.0) or 1.0)
 
-            w  = {"M1_RESERVES": 0.387, "M2_REPO": 0.374, "M5_TREASURY": 0.088}
+            w = {"M1_RESERVES": 0.387, "M2_REPO": 0.374, "M5_TREASURY": 0.088}
             wt = sum(w.values())
-            base_val = (w["M1_RESERVES"] * s1 + w["M2_REPO"] * s2 + w["M5_TREASURY"] * s5) / wt
-            lsi_val  = min(base_val * sf * 100, 100.0)
-            status   = "RED" if lsi_val > 70 else "YELLOW" if lsi_val > 40 else "GREEN"
+            base_val = (w["M1_RESERVES"] * s1 + w["M2_REPO"]
+                        * s2 + w["M5_TREASURY"] * s5) / wt
+            lsi_val = min(base_val * sf * 100, 100.0)
+            status = "RED" if lsi_val > 70 else "YELLOW" if lsi_val > 40 else "GREEN"
             return pd.Series({"LSI": lsi_val, "status": status})
 
         scores = base.apply(_row_lsi, axis=1)
@@ -241,7 +258,8 @@ def _build_backtest(data: dict, engine=None) -> pd.DataFrame | None:
         return result.sort_values("date").reset_index(drop=True)
     except Exception as e:
         import logging
-        logging.getLogger(__name__).error("Backtest error: %s", e, exc_info=True)
+        logging.getLogger(__name__).error(
+            "Backtest error: %s", e, exc_info=True)
         return None
 
 
@@ -252,8 +270,10 @@ def _build_backtest(data: dict, engine=None) -> pd.DataFrame | None:
 def status_color(status):
     return {"GREEN": "#27ae60", "YELLOW": "#f39c12", "RED": "#e74c3c"}.get(status, "#95a5a6")
 
+
 def status_ru(status):
     return {"GREEN": "НОРМА", "YELLOW": "ВНИМАНИЕ", "RED": "СТРЕСС"}.get(status, status)
+
 
 def gauge_fig(value):
     fig = go.Figure(go.Indicator(
@@ -288,7 +308,8 @@ with st.spinner("Загрузка данных с ЦБ РФ и Минфина...
         load_ok = True
     except Exception as e:
         st.error(f"Ошибка загрузки: {e}")
-        import traceback; st.code(traceback.format_exc())
+        import traceback
+        st.code(traceback.format_exc())
         load_ok = False
 
 if not load_ok:
@@ -298,7 +319,8 @@ if not load_ok:
 # ЗАГОЛОВОК
 # ══════════════════════════════════════════════════════════════════
 st.title("RU Liquidity Sentinel")
-st.caption(f"Обновлено: {lsi['computed_at']}  |  Источники: ЦБ РФ · Минфин · ФНС")
+st.caption(
+    f"Обновлено: {lsi['computed_at']}  |  Источники: ЦБ РФ · Минфин · ФНС")
 
 col_lsi, col_sf, col_status = st.columns([2, 1, 1])
 
@@ -307,8 +329,9 @@ with col_lsi:
 
 with col_sf:
     sf = lsi["seasonal_factor"]
-    sf_labels = {1.4: "Конец квартала", 1.2: "Конец месяца", 1.1: "Налоговая неделя"}
-    sf_label  = next((v for k, v in sf_labels.items() if sf >= k), "Норма")
+    sf_labels = {1.4: "Конец квартала",
+                 1.2: "Конец месяца", 1.1: "Налоговая неделя"}
+    sf_label = next((v for k, v in sf_labels.items() if sf >= k), "Норма")
     st.metric("Сезонный коэффициент", f"×{sf:.2f}")
     if sf >= 1.4:
         st.error(f"⚠ {sf_label} — максимальное налоговое давление")
@@ -321,7 +344,7 @@ with col_sf:
 
 with col_status:
     color = status_color(lsi["status"])
-    icon  = "🟢" if lsi["status"] == "GREEN" else "🟡" if lsi["status"] == "YELLOW" else "🔴"
+    icon = "🟢" if lsi["status"] == "GREEN" else "🟡" if lsi["status"] == "YELLOW" else "🔴"
     st.markdown(f"""
     <div style="background:{color};color:white;padding:24px 16px;
                 border-radius:12px;text-align:center;margin-top:10px;">
@@ -332,10 +355,11 @@ with col_status:
     """, unsafe_allow_html=True)
 
 # ── Авто-комментарий
-scores  = lsi["scores"]
-_top    = max(scores.items(), key=lambda x: x[1])
-_tax_s  = f"Налоговое давление (SF=×{sf:.1f})." if sf > 1.0 else "Налогового давления нет."
-_sts    = {"GREEN": "в норме", "YELLOW": "в зоне внимания", "RED": "в стрессе"}[lsi["status"]]
+scores = lsi["scores"]
+_top = max(scores.items(), key=lambda x: x[1])
+_tax_s = f"Налоговое давление (SF=×{sf:.1f})." if sf > 1.0 else "Налогового давления нет."
+_sts = {"GREEN": "в норме", "YELLOW": "в зоне внимания",
+        "RED": "в стрессе"}[lsi["status"]]
 st.info(
     f"**LSI = {lsi['lsi']:.1f}/100 — рынок ликвидности {_sts}.** "
     f"Главный драйвер: **{_top[0]}** ({_top[1]:.0f}/100). {_tax_s} "
@@ -377,25 +401,26 @@ for col, mk in zip(cols, ["M1", "M2", "M3", "M5"]):
         </div>
         """, unsafe_allow_html=True)
 
-contrib_vals = [lsi["contributions"].get(CONTRIB_KEY[mk], 0) or 0 for mk in ["M1","M2","M3","M5"]]
+contrib_vals = [lsi["contributions"].get(CONTRIB_KEY[mk], 0) or 0 for mk in [
+    "M1", "M2", "M3", "M5"]]
 fig_bar = go.Figure(go.Bar(
-    x=[MODULE_DESC[k] for k in ["M1","M2","M3","M5"]],
+    x=[MODULE_DESC[k] for k in ["M1", "M2", "M3", "M5"]],
     y=contrib_vals,
     marker_color=[
-        "#27ae60" if (scores.get(k,0) or 0) < 40
-        else "#f39c12" if (scores.get(k,0) or 0) < 70
+        "#27ae60" if (scores.get(k, 0) or 0) < 40
+        else "#f39c12" if (scores.get(k, 0) or 0) < 70
         else "#e74c3c"
-        for k in ["M1","M2","M3","M5"]
+        for k in ["M1", "M2", "M3", "M5"]
     ],
     text=[f"{v:.1f}" for v in contrib_vals],
     textposition="outside",
 ))
-fig_bar.update_layout(height=260, margin=dict(t=10,b=10,l=10,r=10),
+fig_bar.update_layout(height=260, margin=dict(t=10, b=10, l=10, r=10),
                       yaxis_title="Вклад в LSI (пунктов)", showlegend=False)
 st.plotly_chart(fig_bar, use_container_width=True)
 
 with st.expander("📐 Методология агрегации (формула LSI)"):
-    m1v, m2v, m3v, m5v = (scores.get(k,0) for k in ["M1","M2","M3","M5"])
+    m1v, m2v, m3v, m5v = (scores.get(k, 0) for k in ["M1", "M2", "M3", "M5"])
     base_ = m1v*0.387 + m2v*0.374 + m3v*0.152 + m5v*0.088
     st.markdown(f"""
 **Метод:** взвешенная сумма (явная формула, интерпретируема по ТЗ).
@@ -403,7 +428,7 @@ with st.expander("📐 Методология агрегации (формула
 ```
 LSI = (M1×0.387 + M2×0.374 + M3×0.152 + M5×0.088) × SF_M4
     = ({m1v:.1f}×0.387 + {m2v:.1f}×0.374 + {m3v:.1f}×0.152 + {m5v:.1f}×0.088) × {sf:.2f}
-    = {base_:.1f} × {sf:.2f} = {min(base_*sf,100):.1f} / 100
+    = {base_:.1f} × {sf:.2f} = {min(base_*sf, 100):.1f} / 100
 ```
 
 | Модуль | Признаки ТЗ | SNR | Вес |
@@ -428,9 +453,11 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 
 # ── М1 ────────────────────────────────────────────────────────────
 with tab1:
-    df1 = r1["signals_df"].dropna(subset=["MAD_score_RUONIA"]) if not r1["signals_df"].empty else pd.DataFrame()
+    df1 = r1["signals_df"].dropna(
+        subset=["MAD_score_RUONIA"]) if not r1["signals_df"].empty else pd.DataFrame()
     st.metric("Стресс-оценка М1", f"{scores.get('M1', 0):.1f} / 100")
-    st.caption("Источник: Банк России — обязательные резервы (с 2004) и RUONIA (с 2014)")
+    st.caption(
+        "Источник: Банк России — обязательные резервы (с 2004) и RUONIA (с 2014)")
 
     if not df1.empty and "spread" in df1.columns:
         fig1 = go.Figure()
@@ -475,7 +502,8 @@ with tab1:
                     name="⚠ Flag_AboveKey — RUONIA выше ключевой",
                     marker=dict(color="orange", size=9, symbol="star"),
                 ))
-        fig1b.add_hline(y=0, line_color="gray", line_dash="dot", line_width=0.8)
+        fig1b.add_hline(y=0, line_color="gray",
+                        line_dash="dot", line_width=0.8)
         fig1b.add_hrect(y0=2, y1=11, fillcolor="red", opacity=0.04)
         fig1b.update_layout(
             title="М1: MAD-сигналы",
@@ -505,7 +533,8 @@ with tab2:
                 name="MAD_score_rate_spread (σ)",
                 yaxis="y2", line=dict(color="crimson", width=1.5, dash="dot"),
             ))
-        flags2 = df2[df2["Flag_Demand"] == 1] if "Flag_Demand" in df2.columns else pd.DataFrame()
+        flags2 = df2[df2["Flag_Demand"] ==
+                     1] if "Flag_Demand" in df2.columns else pd.DataFrame()
         if len(flags2):
             fig2.add_trace(go.Scatter(
                 x=flags2["date"], y=flags2["rate_spread"], mode="markers",
@@ -521,7 +550,8 @@ with tab2:
         )
         st.plotly_chart(fig2, use_container_width=True)
 
-    st.caption("Основной сигнал M2 — MAD_score_rate_spread (переплата над ключевой ставкой).")
+    st.caption(
+        "Основной сигнал M2 — MAD_score_rate_spread (переплата над ключевой ставкой).")
 
 # ── М3 ────────────────────────────────────────────────────────────
 with tab3:
@@ -530,20 +560,22 @@ with tab3:
     st.caption("Источник: Министерство финансов РФ — результаты аукционов ОФЗ")
 
     if df3 is not None and not df3.empty and "cover_ratio" in df3.columns:
-        auctions3 = df3.dropna(subset=["cover_ratio"]).copy().reset_index(drop=True)
+        auctions3 = df3.dropna(
+            subset=["cover_ratio"]).copy().reset_index(drop=True)
         if len(auctions3):
             # Два аукциона в один день → разносим по оси x на ±0.3 дня
             auctions3["rank"] = auctions3.groupby("date").cumcount()
-            auctions3["n_per_day"] = auctions3.groupby("date")["rank"].transform("count")
+            auctions3["n_per_day"] = auctions3.groupby(
+                "date")["rank"].transform("count")
             auctions3["x_offset"] = auctions3.apply(
                 lambda r: pd.Timedelta(days=-0.3) if r["n_per_day"] > 1 and r["rank"] == 0
                 else (pd.Timedelta(days=0.3) if r["n_per_day"] > 1 and r["rank"] == 1
-                else pd.Timedelta(0)), axis=1
+                      else pd.Timedelta(0)), axis=1
             )
             auctions3["x"] = auctions3["date"] + auctions3["x_offset"]
 
             colors3 = [
-                "crimson"   if c < 1.2 else
+                "crimson" if c < 1.2 else
                 "steelblue" if c > 2.0 else
                 "#aaaaaa"
                 for c in auctions3["cover_ratio"]
@@ -553,7 +585,8 @@ with tab3:
                 x=auctions3["x"],
                 y=auctions3["cover_ratio"],
                 marker_color=colors3,
-                width=[1000 * 3600 * 24 * 0.55] * len(auctions3),  # ширина 0.55 дня в мс
+                width=[1000 * 3600 * 24 * 0.55] *
+                len(auctions3),  # ширина 0.55 дня в мс
                 showlegend=False,
             ))
             fig3.add_hline(y=1.2, line_dash="dash", line_color="orange", line_width=1.5,
@@ -572,7 +605,8 @@ with tab3:
                 "🔵 Переспрос (> 2.0) &nbsp;&nbsp; "
                 "⚪ Норма (1.2 – 2.0)"
             )
-            st.caption("Два столбика на дату = два выпуска ОФЗ в один день. cover_ratio = спрос / размещение.")
+            st.caption(
+                "Два столбика на дату = два выпуска ОФЗ в один день. cover_ratio = спрос / размещение.")
 
         if "avg_yield" in df3.columns:
             fig3b = go.Figure()
@@ -592,20 +626,24 @@ with tab3:
 
 # ── М4 ────────────────────────────────────────────────────────────
 with tab4:
-    df4    = r4["signals_df"]
+    df4 = r4["signals_df"]
     tax_df = r4.get("tax_df", pd.DataFrame())
     m4_row = r4.get("latest", {})
-    st.metric("Seasonal_Factor сегодня", f"×{m4_row.get('Seasonal_Factor', 1.0):.2f}")
-    st.caption("Источник: Налоговый кодекс РФ — даты ключевых платежей (2014–2027)")
+    st.metric("Seasonal_Factor сегодня",
+              f"×{m4_row.get('Seasonal_Factor', 1.0):.2f}")
+    st.caption(
+        "Источник: Налоговый кодекс РФ — даты ключевых платежей (2014–2027)")
 
     # Ближайшие налоговые даты
     if tax_df is not None and not tax_df.empty:
         today_ts = pd.Timestamp.today()
-        upcoming = tax_df[pd.to_datetime(tax_df["date"]) >= today_ts].head(8).copy()
-        upcoming["date"] = pd.to_datetime(upcoming["date"]).dt.strftime("%d.%m.%Y")
+        upcoming = tax_df[pd.to_datetime(
+            tax_df["date"]) >= today_ts].head(8).copy()
+        upcoming["date"] = pd.to_datetime(
+            upcoming["date"]).dt.strftime("%d.%m.%Y")
         st.markdown("**Ближайшие налоговые даты:**")
-        st.dataframe(upcoming[["date","tax_type"]].rename(
-            columns={"date":"Дата","tax_type":"Налог"}
+        st.dataframe(upcoming[["date", "tax_type"]].rename(
+            columns={"date": "Дата", "tax_type": "Налог"}
         ).reset_index(drop=True), use_container_width=True, hide_index=True)
 
     if df4 is not None and not df4.empty:
@@ -615,7 +653,7 @@ with tab4:
             fill="tozeroy", fillcolor="rgba(128,0,128,0.07)",
             line=dict(color="purple", width=1.5),
         ))
-        for val, label in [(1.1,"Tax_Week"), (1.2,"End_of_Month"), (1.4,"End_of_Quarter")]:
+        for val, label in [(1.1, "Tax_Week"), (1.2, "End_of_Month"), (1.4, "End_of_Quarter")]:
             fig4.add_hline(y=val, line_color="purple", line_dash="dash", line_width=0.6,
                            annotation_text=label, annotation_position="right",
                            annotation_font_size=10)
@@ -626,16 +664,18 @@ with tab4:
             height=300, showlegend=False,
         )
         st.plotly_chart(fig4, use_container_width=True)
-        st.caption("Tax_Week_Flag · End_of_Month_Flag · End_of_Quarter_Flag · Seasonal_Factor")
+        st.caption(
+            "Tax_Week_Flag · End_of_Month_Flag · End_of_Quarter_Flag · Seasonal_Factor")
 
 # ── М5 ────────────────────────────────────────────────────────────
 with tab5:
     df5 = r5["signals_df"]
     st.metric("Стресс-оценка М5", f"{scores.get('M5', 0):.1f} / 100")
     if not df5.empty and "balance" in df5.columns:
-        bal_now  = df5["balance"].iloc[-1]
+        bal_now = df5["balance"].iloc[-1]
         bal_sign = "дефицит" if bal_now > 0 else "профицит"
-        st.caption(f"Источник: Банк России — структурный баланс (с 2019). Сейчас: {bal_sign} {abs(bal_now):.0f} млрд руб.")
+        st.caption(
+            f"Источник: Банк России — структурный баланс (с 2019). Сейчас: {bal_sign} {abs(bal_now):.0f} млрд руб.")
 
         fig5 = go.Figure()
         fig5.add_trace(go.Scatter(
@@ -695,7 +735,8 @@ with tab6:
         st.warning("Не удалось построить backtest: недостаточно данных")
     else:
         bt_c = bt.dropna(subset=["LSI"]).sort_values("date").copy()
-        bt_c["LSI_smooth"] = bt_c["LSI"].rolling(7, min_periods=1, center=True).mean()
+        bt_c["LSI_smooth"] = bt_c["LSI"].rolling(
+            7, min_periods=1, center=True).mean()
 
         fig_bt = go.Figure()
         for status, color, label in [
@@ -714,8 +755,8 @@ with tab6:
             line=dict(color="#e74c3c", width=2),
         ))
         for s, e, label in [
-            ("2022-02-01","2022-05-01","Фев–май 2022<br>Геополитический шок"),
-            ("2023-07-01","2023-10-01","Авг–окт 2023<br>Валютный стресс"),
+            ("2022-02-01", "2022-05-01", "Фев–май 2022<br>Геополитический шок"),
+            ("2023-07-01", "2023-10-01", "Авг–окт 2023<br>Валютный стресс"),
         ]:
             fig_bt.add_vrect(x0=s, x1=e, fillcolor="red", opacity=0.07,
                              annotation_text=label, annotation_position="top left",
@@ -733,21 +774,22 @@ with tab6:
         st.plotly_chart(fig_bt, use_container_width=True)
 
         # Сравнение эпизодов
-        norm = bt_c[~(bt_c["date"].between("2022-02-01","2022-05-01") |
-                      bt_c["date"].between("2023-07-01","2023-10-01"))]
-        rows = [{"Период":"Норма","Медиана LSI":norm["LSI"].median(),
-                 "Макс LSI":norm["LSI"].max(),"Дней":len(norm)}]
-        for s, e, lbl in [("2022-02-01","2022-05-01","Фев–май 2022"),
-                           ("2023-07-01","2023-10-01","Авг–окт 2023")]:
-            sub = bt_c[bt_c["date"].between(s,e)]
+        norm = bt_c[~(bt_c["date"].between("2022-02-01", "2022-05-01") |
+                      bt_c["date"].between("2023-07-01", "2023-10-01"))]
+        rows = [{"Период": "Норма", "Медиана LSI": norm["LSI"].median(),
+                 "Макс LSI": norm["LSI"].max(), "Дней": len(norm)}]
+        for s, e, lbl in [("2022-02-01", "2022-05-01", "Фев–май 2022"),
+                          ("2023-07-01", "2023-10-01", "Авг–окт 2023")]:
+            sub = bt_c[bt_c["date"].between(s, e)]
             if len(sub):
-                rows.append({"Период":lbl,"Медиана LSI":sub["LSI"].median(),
-                             "Макс LSI":sub["LSI"].max(),"Дней":len(sub)})
-        st.dataframe(pd.DataFrame(rows).round(1), use_container_width=True, hide_index=True)
+                rows.append({"Период": lbl, "Медиана LSI": sub["LSI"].median(),
+                             "Макс LSI": sub["LSI"].max(), "Дней": len(sub)})
+        st.dataframe(pd.DataFrame(rows).round(
+            1), use_container_width=True, hide_index=True)
 
         st.markdown("**Последние 20 дней:**")
-        recent = bt_c[["date","LSI","status"]].tail(20).copy()
+        recent = bt_c[["date", "LSI", "status"]].tail(20).copy()
         recent["status"] = recent["status"].map(
-            {"GREEN":"🟢 Норма","YELLOW":"🟡 Внимание","RED":"🔴 Стресс"})
+            {"GREEN": "🟢 Норма", "YELLOW": "🟡 Внимание", "RED": "🔴 Стресс"})
         st.dataframe(recent.round(1).reset_index(drop=True),
                      use_container_width=True, hide_index=True)

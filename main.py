@@ -24,7 +24,7 @@ def run(
         False, "--force", "-f", help="Принудительно обновить кеш"),
 ):
     """Выполнить пайплайн анализа один раз"""
-    session = next(get_session())
+    session = get_session()
     try:
         result = Pipeline(
             session=session, force_refresh=force_refresh).execute()
@@ -62,7 +62,7 @@ def backtest(
     end_year:   int = typer.Option(2023, help="Конечный год"),
 ):
     """Запустить backtesting на исторических эпизодах"""
-    session = next(get_session())
+    session = get_session()
     try:
         runner = BacktestRunner(
             start_year=start_year,

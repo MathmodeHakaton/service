@@ -14,7 +14,7 @@ def show():
     st.header("📊 Обзор ликвидности")
 
     # Получить текущий LSI
-    session = next(get_session())
+    session = get_session()
     try:
         pipeline = Pipeline(session=session)
         lsi_result = pipeline.execute()
@@ -29,7 +29,8 @@ def show():
             st.metric("Status", lsi_result.status.upper())
 
         with col3:
-            st.metric("Timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            st.metric("Timestamp", datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S"))
 
         # Вклады модулей
         st.subheader("Вклады модулей")
