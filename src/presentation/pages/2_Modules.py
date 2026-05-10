@@ -12,7 +12,7 @@ def show():
 
     st.header("🔍 Детализация модулей")
 
-    session = next(get_session())
+    session = get_session()
     try:
         pipeline = Pipeline(session=session)
 
