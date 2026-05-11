@@ -118,52 +118,114 @@ class MinfinFetcher(BaseFetcher):
         for idx, table in enumerate(tables):
             logger.debug(f"Проверяю таблицу {idx}")
             try:
-                headers = [th.get_text(strip=True)
-                           for th in table.find_all("th")]
-
-                # Проверяем, содержит ли заголовок нужные слова (дата, размещение и т.д.)
-                if not headers:
-                    headers = [td.get_text(strip=True) for td in table.find_all("tr")[
-                        0].find_all("td")]
-
-                # первые 3 для отладки
-                logger.debug(f"Таблица {idx} заголовки: {headers[:3]}")
-
-                # Проверяем наличие ключевых колонок
-                headers_lower = [h.lower() for h in headers]
-                if not any("дата" in h or "date" in h for h in headers_lower):
+                # Получаем все строки
+                all_rows = table.find_all("tr")
+                if len(all_rows) < 2:
+                    logger.debug(f"Таблица {idx}: слишком мало строк")
                     continue
 
-                rows = []
-                for tr in table.find_all("tr")[1:]:
-                    cells = [td.get_text(strip=True)
-                             for td in tr.find_all("td")]
-                    if cells and len(cells) > 2:  # Должно быть минимум несколько колонок
-                        rows.append(cells)
+                # Ищем заголовки в th или первой строке td
+                header_row = all_rows[0]
+                headers = [th.get_text(strip=True)
+                           for th in header_row.find_all("th")]
 
-                if rows:
-                    logger.info(f"Таблица {idx}: найдено {len(rows)} строк")
-                    df = pd.DataFrame(
-                        rows, columns=headers[:len(rows[0])] if headers else None)
-                    normalized_df = self._normalize_columns(df)
-                    if normalized_df is not None and len(normalized_df) > 0:
-                        return normalized_df
+                if not headers:
+                    headers = [td.get_text(strip=True)
+                               for td in header_row.find_all("td")]
+
+                if not headers:
+                    continue
+
+                logger.debug(
+                    f"Таблица {idx} заголовки ({len(headers)}): {headers[:3]}...")
+
+                # Проверяем наличие ключевых колонок (должна быть дата или размещение)
+                headers_lower = [h.lower() for h in headers]
+                has_date = any(
+                    "дата" in h or "date" in h for h in headers_lower)
+                has_placement = any(
+                    "размещен" in h or "placement" in h for h in headers_lower)
+
+                if not (has_date or has_placement):
+                    continue
+
+                # Парсим строки данных
+                rows = []
+                for tr in all_rows[1:]:
+                    cells = [td.get_text(strip=True)
+                             for td in tr.find_all(["td", "th"])]
+                    if not cells:
+                        continue
+                    # Фильтруем пустые строки
+                    if all(not c or c.isspace() for c in cells):
+                        continue
+                    rows.append(cells)
+
+                if not rows:
+                    logger.debug(f"Таблица {idx}: нет строк данных")
+                    continue
+
+                logger.info(
+                    f"Таблица {idx}: найдено {len(rows)} строк, {len(headers)} колонок")
+
+                # Обработаем дублирующиеся имена колонок
+                headers = self._deduplicate_headers(headers)
+
+                # Создаём DataFrame, выравнивая количество колонок
+                max_cols = max(len(row) for row in rows)
+                headers = headers[:max_cols]
+                while len(headers) < max_cols:
+                    headers.append(f"col_{len(headers)}")
+
+                df = pd.DataFrame(rows, columns=headers)
+                logger.debug(
+                    f"DataFrame создан: {df.shape}, колонки: {df.columns.tolist()}")
+
+                normalized_df = self._normalize_columns(df)
+                if normalized_df is not None and len(normalized_df) > 0:
+                    logger.info(
+                        f"Таблица {idx} успешно обработана, {len(normalized_df)} строк")
+                    return normalized_df
             except Exception as e:
-                logger.debug(f"Ошибка при парсинге таблицы {idx}: {e}")
+                logger.debug(
+                    f"Ошибка при парсинге таблицы {idx}: {e}", exc_info=True)
                 continue
 
         logger.warning("Ни одна таблица не подошла под критерии")
         return None
 
-    def _normalize_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _deduplicate_headers(self, headers: list) -> list:
+        """Обработать дублирующиеся имена колонок"""
+        seen = {}
+        result = []
+        for h in headers:
+            if h in seen:
+                seen[h] += 1
+                result.append(f"{h}_{seen[h]}")
+            else:
+                seen[h] = 0
+                result.append(h)
+        return result
+
+    def _normalize_columns(self, df: pd.DataFrame) -> pd.DataFrame | None:
         """Стандартизация колонок Минфина."""
         if df.empty:
-            return df
+            logger.warning("DataFrame пуст")
+            return None
+
+        # Обработаем дублирующиеся имена колонок, если они остались
+        if df.columns.duplicated().any():
+            logger.warning(
+                f"Обнаружены дублирующиеся имена колонок: {df.columns.tolist()}")
+            df.columns = self._deduplicate_headers(df.columns.tolist())
 
         logger.debug(f"Исходные колонки: {df.columns.tolist()}")
 
+        # Первый проход: переименование колонок
         rename = {}
         for c in df.columns:
+            if not isinstance(c, str):
+                continue
             cl = c.lower()
             if "дата" in cl or "date" in cl:
                 rename[c] = "date"
@@ -186,48 +248,82 @@ class MinfinFetcher(BaseFetcher):
         # Обработка даты
         if "date" in df.columns:
             try:
+                # Сначала убедимся, что это Series, а не DataFrame
+                date_col = df["date"]
+                if isinstance(date_col, pd.DataFrame):
+                    logger.warning("date — DataFrame, беру первую колонку")
+                    date_col = date_col.iloc[:, 0]
+
+                date_col = date_col.astype(str).str.strip()
                 df["date"] = pd.to_datetime(
-                    df["date"], dayfirst=True, errors="coerce")
+                    date_col, dayfirst=True, errors="coerce")
+                valid_dates = df["date"].notna().sum()
                 logger.debug(
-                    f"Дата спарсена, НЕ-null значений: {df['date'].notna().sum()}")
+                    f"Дата спарсена, валидных значений: {valid_dates}/{len(df)}")
+
+                if valid_dates == 0:
+                    logger.warning("Ни одна дата не спарсена правильно")
+                    return None
             except Exception as e:
                 logger.warning(f"Ошибка парсинга даты: {e}")
+                return None
 
         # Обработка числовых колонок
-        for col in ["offer_volume", "demand_volume", "placement_volume", "avg_yield"]:
-            if col in df.columns:
-                try:
-                    df[col] = pd.to_numeric(
-                        df[col].astype(str)
-                        .str.replace(r"[\s\xa0]", "", regex=True)
-                        .str.replace(",", "."),
-                        errors="coerce",
-                    )
-                except Exception as e:
-                    logger.warning(f"Ошибка конвертации колонки {col}: {e}")
+        numeric_cols = ["offer_volume", "demand_volume",
+                        "placement_volume", "avg_yield"]
+        for col in numeric_cols:
+            if col not in df.columns:
+                continue
+            try:
+                # Убедимся, что это Series
+                col_data = df[col]
+                if isinstance(col_data, pd.DataFrame):
+                    logger.warning(f"{col} — DataFrame, беру первую колонку")
+                    col_data = col_data.iloc[:, 0]
 
-        # cover_ratio = demand / placement (правильная формула)
+                # Конвертируем в строки и очищаем
+                col_str = col_data.astype(str).str.strip()
+                col_str = col_str.str.replace(r"[\s\xa0]", "", regex=True)
+                col_str = col_str.str.replace(",", ".")
+
+                df[col] = pd.to_numeric(col_str, errors="coerce")
+                logger.debug(
+                    f"{col}: {df[col].notna().sum()} валидных значений")
+            except Exception as e:
+                logger.warning(f"Ошибка конвертации колонки {col}: {e}")
+                df[col] = None
+
+        # Вычисление производных колонок
         if "demand_volume" in df.columns and "placement_volume" in df.columns:
             try:
-                df["cover_ratio"] = df["demand_volume"] / \
-                    df["placement_volume"].replace(0, np.nan)
+                demand = pd.to_numeric(df["demand_volume"], errors="coerce")
+                placement = pd.to_numeric(
+                    df["placement_volume"], errors="coerce")
+                df["cover_ratio"] = demand / placement.replace(0, np.nan)
             except Exception as e:
                 logger.warning(f"Ошибка вычисления cover_ratio: {e}")
 
-        # bid_cover = demand / offer (объёмный, норма < 1 для РФ)
         if "demand_volume" in df.columns and "offer_volume" in df.columns:
             try:
-                df["bid_cover"] = df["demand_volume"] / \
-                    df["offer_volume"].replace(0, np.nan)
+                demand = pd.to_numeric(df["demand_volume"], errors="coerce")
+                offer = pd.to_numeric(df["offer_volume"], errors="coerce")
+                df["bid_cover"] = demand / offer.replace(0, np.nan)
             except Exception as e:
                 logger.warning(f"Ошибка вычисления bid_cover: {e}")
 
         # Фильтруем по наличию даты
         if "date" in df.columns:
+            initial_len = len(df)
             df = df.dropna(subset=["date"])
+            logger.debug(f"После фильтра по датам: {len(df)}/{initial_len}")
 
-        if len(df) > 0:
+            if len(df) == 0:
+                logger.warning(
+                    "После фильтра по датам остался пустой DataFrame")
+                return None
+
             df = df.sort_values("date").reset_index(drop=True)
-            logger.info(f"Нормализовано {len(df)} строк")
+            logger.info(
+                f"Нормализовано {len(df)} строк с датами от {df['date'].min()} до {df['date'].max()}")
 
         return df
