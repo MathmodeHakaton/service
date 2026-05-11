@@ -26,6 +26,10 @@ from config.settings import get_settings
 from src.presentation.rag.knowledge_base import build_knowledge_base
 from src.presentation.rag.retriever import retrieve
 from src.presentation.rag.chat_llm import call_chat
+from src.presentation.rag.guardrails import (
+    CANONICAL_REFUSAL, is_prompt_injection, looks_like_refusal,
+    filter_history_for_llm,
+)
 
 settings = get_settings()
 creds_ok = bool(settings.yandex_api_key and settings.yandex_folder_id)
@@ -106,27 +110,45 @@ if prompt:
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        retrieved = retrieve(prompt, chunks, k=top_k)
+        # 1) Локальный guardrail: явные prompt-injection / jailbreak ловим без LLM.
+        if is_prompt_injection(prompt):
+            answer = CANONICAL_REFUSAL
+            refused = True
+            retrieved = []
+        else:
+            retrieved = retrieve(prompt, chunks, k=top_k)
+            # 2) В LLM шлём отфильтрованную историю — без прежних отказов и их триггеров.
+            clean_history = filter_history_for_llm(st.session_state.chat_history)
+            with st.chat_message("assistant"):
+                placeholder = st.empty()
+                placeholder.markdown("_думаю…_")
+                try:
+                    answer = call_chat(
+                        messages=clean_history,
+                        chunks=retrieved,
+                        temperature=0.0,
+                    )
+                except Exception as e:
+                    answer = f"⚠ Ошибка Yandex API: {e}"
+                    refused = False
+                else:
+                    # 3) Если ответ выглядит как отказ — помечаем, чтобы выкинуть из истории на след. шаге.
+                    refused = looks_like_refusal(answer)
+                placeholder.markdown(answer)
+                with st.expander("🔍 RAG-контекст этого ответа"):
+                    for c in retrieved:
+                        st.write(f"• {c.title}")
 
-        with st.chat_message("assistant"):
-            placeholder = st.empty()
-            placeholder.markdown("_думаю…_")
-            try:
-                answer = call_chat(
-                    messages=st.session_state.chat_history,
-                    chunks=retrieved,
-                    temperature=0.0,
-                )
-            except Exception as e:
-                answer = f"⚠ Ошибка Yandex API: {e}"
-            placeholder.markdown(answer)
-            with st.expander("🔍 RAG-контекст этого ответа"):
-                for c in retrieved:
-                    st.write(f"• {c.title}")
+        # Если отказ пришёл от guardrail (LLM не вызывали) — отдельная отрисовка.
+        if not retrieved:
+            with st.chat_message("assistant"):
+                st.markdown(answer)
+                st.caption("🛡 Заблокировано локальным guardrail (prompt-injection).")
 
         st.session_state.chat_history.append({
             "role": "assistant",
             "content": answer,
             "ctx_titles": [c.title for c in retrieved],
+            "refused": refused,
             "ts": datetime.now().isoformat(timespec="seconds"),
         })
