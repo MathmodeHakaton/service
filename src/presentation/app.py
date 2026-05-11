@@ -298,7 +298,7 @@ st.caption(f"Обновлено: {lsi['computed_at']}  |  Источники: Ц
 col_lsi, col_sf, col_status = st.columns([2, 1, 1])
 
 with col_lsi:
-    st.plotly_chart(gauge_fig(lsi["lsi"]), use_container_width=True)
+    st.metric("LSI", f"{lsi['lsi']:.1f} / 100")
 
 with col_sf:
     sf = lsi["seasonal_factor"]
@@ -372,22 +372,6 @@ for col, mk in zip(cols, ["M1", "M2", "M3", "M5"]):
         </div>
         """, unsafe_allow_html=True)
 
-contrib_vals = [lsi["contributions"].get(CONTRIB_KEY[mk], 0) or 0 for mk in ["M1","M2","M3","M5"]]
-fig_bar = go.Figure(go.Bar(
-    x=[MODULE_DESC[k] for k in ["M1","M2","M3","M5"]],
-    y=contrib_vals,
-    marker_color=[
-        "#27ae60" if (scores.get(k,0) or 0) < 40
-        else "#f39c12" if (scores.get(k,0) or 0) < 70
-        else "#e74c3c"
-        for k in ["M1","M2","M3","M5"]
-    ],
-    text=[f"{v:.1f}" for v in contrib_vals],
-    textposition="outside",
-))
-fig_bar.update_layout(height=260, margin=dict(t=10,b=10,l=10,r=10),
-                      yaxis_title="Вклад в LSI (пунктов)", showlegend=False)
-st.plotly_chart(fig_bar, use_container_width=True)
 
 with st.expander("📐 Методология агрегации (формула LSI)"):
     m1v, m2v, m3v, m5v = (scores.get(k,0) for k in ["M1","M2","M3","M5"])
@@ -427,58 +411,6 @@ with tab1:
     st.metric("Стресс-оценка М1", f"{scores.get('M1', 0):.1f} / 100")
     st.caption("Источник: Банк России — обязательные резервы (с 2004) и RUONIA (с 2014)")
 
-    if not df1.empty and "spread" in df1.columns:
-        fig1 = go.Figure()
-        fig1.add_trace(go.Bar(
-            x=df1["date"], y=df1["spread"].fillna(0),
-            name="Запас резервов (факт − норматив), млрд руб.",
-            marker_color="steelblue", opacity=0.55,
-        ))
-        if "ruonia_avg" in df1.columns:
-            fig1.add_trace(go.Scatter(
-                x=df1["date"], y=df1["ruonia_avg"],
-                name="Ставка RUONIA, % год.",
-                yaxis="y2", line=dict(color="crimson", width=2),
-            ))
-        fig1.update_layout(
-            title="М1: Запас резервов и ставка RUONIA",
-            yaxis=dict(title="Запас, млрд руб."),
-            yaxis2=dict(title="RUONIA, %", overlaying="y", side="right"),
-            height=360, legend=dict(x=0, y=1.12, orientation="h"),
-        )
-        st.plotly_chart(fig1, use_container_width=True)
-
-    if not df1.empty:
-        fig1b = go.Figure()
-        fig1b.add_trace(go.Scatter(
-            x=df1["date"], y=df1["MAD_score_RUONIA"],
-            name="MAD_score_RUONIA (аномалия ставки, вес 60%)",
-            line=dict(color="crimson", width=1.8),
-        ))
-        # ТЗ: MAD_score_спред (ранее MAD_score_rel_spread)
-        if "MAD_score_спред" in df1.columns:
-            fig1b.add_trace(go.Scatter(
-                x=df1["date"], y=df1["MAD_score_спред"],
-                name="MAD_score_спред (аномалия запаса, вес 40%)",
-                line=dict(color="steelblue", width=1.5),
-            ))
-        if "Flag_AboveKey" in df1.columns:
-            above = df1[df1["Flag_AboveKey"] == 1]
-            if len(above):
-                fig1b.add_trace(go.Scatter(
-                    x=above["date"], y=above["MAD_score_RUONIA"], mode="markers",
-                    name="⚠ Flag_AboveKey — RUONIA выше ключевой",
-                    marker=dict(color="orange", size=9, symbol="star"),
-                ))
-        fig1b.add_hline(y=0, line_color="gray", line_dash="dot", line_width=0.8)
-        fig1b.add_hrect(y0=2, y1=11, fillcolor="red", opacity=0.04)
-        fig1b.update_layout(
-            title="М1: MAD-сигналы (признаки по ТЗ)",
-            yaxis=dict(title="Отклонение от нормы (σ)", range=[-5, 11]),
-            height=300, legend=dict(x=0, y=1.15, orientation="h"),
-        )
-        st.plotly_chart(fig1b, use_container_width=True)
-        st.caption("MAD_score_RUONIA и MAD_score_спред — признаки M1 по ТЗ. 0 = норма · +3σ = стресс")
 
 # ── М2 ────────────────────────────────────────────────────────────
 with tab2:
@@ -486,48 +418,7 @@ with tab2:
     st.metric("Стресс-оценка М2", f"{scores.get('M2', 0):.1f} / 100")
     st.caption("Источник: Банк России — итоги недельных аукционов репо (с 2010)")
 
-    if not df2.empty and "rate_spread" in df2.columns:
-        fig2 = go.Figure()
-        fig2.add_trace(go.Scatter(
-            x=df2["date"], y=df2["rate_spread"],
-            name="MAD_score_rate_spread — переплата над ключевой, п.п.",
-            line=dict(color="darkorange", width=1.5),
-            fill="tozeroy", fillcolor="rgba(255,165,0,0.1)",
-        ))
-        if "MAD_score_rate_spread" in df2.columns:
-            fig2.add_trace(go.Scatter(
-                x=df2["date"], y=df2["MAD_score_rate_spread"],
-                name="MAD_score_rate_spread (σ)",
-                yaxis="y2", line=dict(color="crimson", width=1.5, dash="dot"),
-            ))
-        flags2 = df2[df2["Flag_Demand"] == 1] if "Flag_Demand" in df2.columns else pd.DataFrame()
-        if len(flags2):
-            fig2.add_trace(go.Scatter(
-                x=flags2["date"], y=flags2["rate_spread"], mode="markers",
-                name="🔴 Flag_Demand — острый переспрос",
-                marker=dict(color="red", size=9, symbol="triangle-up"),
-            ))
-        fig2.add_hline(y=0, line_color="gray", line_dash="dot", line_width=0.8)
-        fig2.update_layout(
-            title="М2: Переплата на аукционах репо ЦБ (7-дневные)",
-            yaxis=dict(title="Переплата, п.п."),
-            yaxis2=dict(title="MAD (σ)", overlaying="y", side="right"),
-            height=380, legend=dict(x=0, y=1.18, orientation="h"),
-        )
-        st.plotly_chart(fig2, use_container_width=True)
-
-    if not df2.empty and "MAD_score_cover" in df2.columns:
-        fig2b = go.Figure()
-        fig2b.add_trace(go.Scatter(
-            x=df2["date"], y=df2["MAD_score_cover"],
-            name="MAD_score_cover (утилизация лимита ЦБ)",
-            line=dict(color="purple", width=1.5),
-        ))
-        fig2b.add_hline(y=0, line_color="gray", line_dash="dot")
-        fig2b.update_layout(title="М2: MAD_score_cover (признак по ТЗ)",
-                            yaxis_title="Отклонение (σ)", height=220, showlegend=False)
-        st.plotly_chart(fig2b, use_container_width=True)
-        st.caption("MAD_score_cover и MAD_score_rate_spread — признаки M2 по ТЗ.")
+    st.caption("Основной сигнал M2 — MAD_score_rate_spread (переплата над ключевой ставкой).")
 
 # ── М3 ────────────────────────────────────────────────────────────
 with tab3:
@@ -535,45 +426,7 @@ with tab3:
     st.metric("Стресс-оценка М3", f"{scores.get('M3', 0):.1f} / 100")
     st.caption("Источник: Министерство финансов РФ — результаты аукционов ОФЗ")
 
-    if df3 is not None and not df3.empty and "cover_ratio" in df3.columns:
-        auctions3 = df3.dropna(subset=["cover_ratio"])
-        if len(auctions3):
-            colors3 = [
-                "crimson"   if c < 1.2 else
-                "steelblue" if c > 2.0 else "#888888"
-                for c in auctions3["cover_ratio"]
-            ]
-            fig3 = go.Figure()
-            fig3.add_trace(go.Bar(
-                x=auctions3["date"], y=auctions3["cover_ratio"],
-                name="cover_ratio = спрос / размещение",
-                marker_color=colors3,
-            ))
-            fig3.add_hline(y=1.2, line_dash="dash", line_color="red",
-                           annotation_text="Flag_Nedospros < 1.2")
-            fig3.add_hline(y=2.0, line_dash="dash", line_color="steelblue",
-                           annotation_text="Flag_Perespros > 2.0")
-            fig3.update_layout(
-                title="М3: Cover ratio аукционов ОФЗ (MAD_score_cover по ТЗ)",
-                yaxis_title="Покрытие (спрос / размещение)",
-                height=300, showlegend=False,
-            )
-            st.plotly_chart(fig3, use_container_width=True)
-
-        if "avg_yield" in df3.columns:
-            fig3b = go.Figure()
-            fig3b.add_trace(go.Scatter(
-                x=df3["date"], y=df3["avg_yield"],
-                line=dict(color="darkorange", width=2),
-            ))
-            fig3b.update_layout(
-                title="М3: Доходность ОФЗ (MAD_score_yield_spread по ТЗ)",
-                yaxis_title="Доходность, % годовых",
-                height=240, showlegend=False,
-            )
-            st.plotly_chart(fig3b, use_container_width=True)
-            st.caption("MAD_score_cover и MAD_score_yield_spread — признаки M3 по ТЗ.")
-    else:
+    if df3 is None or df3.empty:
         st.info("Нет данных ОФЗ — нужны результаты аукционов Минфина")
 
 # ── М4 ────────────────────────────────────────────────────────────
@@ -594,25 +447,6 @@ with tab4:
             columns={"date":"Дата","tax_type":"Налог"}
         ).reset_index(drop=True), use_container_width=True, hide_index=True)
 
-    if df4 is not None and not df4.empty:
-        fig4 = go.Figure()
-        fig4.add_trace(go.Scatter(
-            x=df4["date"], y=df4["Seasonal_Factor"],
-            fill="tozeroy", fillcolor="rgba(128,0,128,0.07)",
-            line=dict(color="purple", width=1.5),
-        ))
-        for val, label in [(1.1,"Tax_Week"), (1.2,"End_of_Month"), (1.4,"End_of_Quarter")]:
-            fig4.add_hline(y=val, line_color="purple", line_dash="dash", line_width=0.6,
-                           annotation_text=label, annotation_position="right",
-                           annotation_font_size=10)
-        fig4.add_hline(y=1.0, line_color="gray", line_dash="dot")
-        fig4.update_layout(
-            title="М4: Seasonal_Factor — налоговый мультипликатор LSI",
-            yaxis=dict(title="SF", range=[0.95, 1.5]),
-            height=300, showlegend=False,
-        )
-        st.plotly_chart(fig4, use_container_width=True)
-        st.caption("Признаки M4 по ТЗ: Tax_Week_Flag · End_of_Month_Flag · End_of_Quarter_Flag · Seasonal_Factor")
 
 # ── М5 ────────────────────────────────────────────────────────────
 with tab5:
@@ -623,54 +457,6 @@ with tab5:
         bal_sign = "дефицит" if bal_now > 0 else "профицит"
         st.caption(f"Источник: Банк России — структурный баланс (с 2019). Сейчас: {bal_sign} {abs(bal_now):.0f} млрд руб.")
 
-        fig5 = go.Figure()
-        fig5.add_trace(go.Scatter(
-            x=df5["date"], y=df5["balance"],
-            fill="tozeroy",
-            fillcolor="rgba(231,76,60,0.12)" if bal_now > 0 else "rgba(39,174,96,0.12)",
-            line=dict(color="steelblue", width=1.8),
-            name="Структурный баланс, млрд руб.",
-        ))
-        if "Flag_Budget_Drain" in df5.columns:
-            drains = df5[df5["Flag_Budget_Drain"] == 1]
-            if len(drains):
-                fig5.add_trace(go.Scatter(
-                    x=drains["date"], y=drains["balance"], mode="markers",
-                    name="⚠ Flag_Budget_Drain (отток > 500 млрд/нед)",
-                    marker=dict(color="red", size=8, symbol="triangle-down"),
-                ))
-        fig5.add_hline(y=0, line_color="black", line_width=1,
-                       annotation_text="граница профицит/дефицит")
-        fig5.update_layout(
-            title="М5: Структурный баланс ликвидности банков",
-            yaxis_title="Баланс, млрд руб.",
-            height=340, legend=dict(x=0, y=1.18, orientation="h"),
-        )
-        st.plotly_chart(fig5, use_container_width=True)
-
-        # MAD-сигналы по ТЗ
-        fig5b = go.Figure()
-        if "MAD_score_ЦБ" in df5.columns:
-            fig5b.add_trace(go.Scatter(
-                x=df5["date"], y=df5["MAD_score_ЦБ"],
-                name="MAD_score_ЦБ (уровень баланса, вес 88%)",
-                line=dict(color="steelblue", width=1.8),
-            ))
-        # ТЗ: MAD_score_Росказна (ранее MAD_score_delta)
-        if "MAD_score_Росказна" in df5.columns:
-            fig5b.add_trace(go.Scatter(
-                x=df5["date"], y=df5["MAD_score_Росказна"],
-                name="MAD_score_Росказна (оттоки казначейства, вес 12%)",
-                line=dict(color="gray", width=1.2, dash="dot"),
-            ))
-        fig5b.add_hline(y=0, line_color="gray", line_dash="dot")
-        fig5b.update_layout(
-            title="М5: MAD-признаки по ТЗ",
-            yaxis_title="Отклонение (σ)",
-            height=260, legend=dict(x=0, y=1.18, orientation="h"),
-        )
-        st.plotly_chart(fig5b, use_container_width=True)
-        st.caption("MAD_score_ЦБ и MAD_score_Росказна — признаки M5 по ТЗ.")
 
 # ── Backtest ──────────────────────────────────────────────────────
 with tab6:
@@ -681,42 +467,6 @@ with tab6:
         st.warning("Не удалось построить backtest: недостаточно данных")
     else:
         bt_c = bt.dropna(subset=["LSI"]).sort_values("date").copy()
-        bt_c["LSI_smooth"] = bt_c["LSI"].rolling(7, min_periods=1, center=True).mean()
-
-        fig_bt = go.Figure()
-        for status, color, label in [
-            ("GREEN",  "#27ae60", "🟢 Норма (0–40)"),
-            ("YELLOW", "#f39c12", "🟡 Внимание (40–70)"),
-            ("RED",    "#e74c3c", "🔴 Стресс (70–100)"),
-        ]:
-            sub = bt_c[bt_c["status"] == status]
-            fig_bt.add_trace(go.Scatter(
-                x=sub["date"], y=sub["LSI"], mode="markers",
-                name=label, marker=dict(color=color, size=3, opacity=0.45),
-            ))
-        fig_bt.add_trace(go.Scatter(
-            x=bt_c["date"], y=bt_c["LSI_smooth"],
-            mode="lines", name="LSI (7-дн. среднее)",
-            line=dict(color="#e74c3c", width=2),
-        ))
-        for s, e, label in [
-            ("2022-02-01","2022-05-01","Фев–май 2022<br>Геополитический шок"),
-            ("2023-07-01","2023-10-01","Авг–окт 2023<br>Валютный стресс"),
-        ]:
-            fig_bt.add_vrect(x0=s, x1=e, fillcolor="red", opacity=0.07,
-                             annotation_text=label, annotation_position="top left",
-                             annotation_font_size=10)
-        fig_bt.add_hline(y=40, line_dash="dash", line_color="#27ae60",
-                         annotation_text="порог внимания (40)")
-        fig_bt.add_hline(y=70, line_dash="dash", line_color="#e74c3c",
-                         annotation_text="порог стресса (70)")
-        fig_bt.update_layout(
-            title="Индекс стресса ликвидности — история",
-            yaxis=dict(range=[0, 105], title="LSI"),
-            xaxis_title="Дата",
-            height=440, legend=dict(x=0, y=1.12, orientation="h"),
-        )
-        st.plotly_chart(fig_bt, use_container_width=True)
 
         # Сравнение эпизодов
         norm = bt_c[~(bt_c["date"].between("2022-02-01","2022-05-01") |

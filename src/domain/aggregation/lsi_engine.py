@@ -126,19 +126,17 @@ class LSIEngine:
         return float(np.clip(s, 0.0, 1.0))
 
     def _score_m3(self, r: dict):
-        """−MAD_score_cover × 0.65 + MAD_score_yield_spread × 0.35 + флаги."""
+        """−MAD_score_cover × 0.65 + MAD_score_yield_spread × 0.35.
+        Флаги Nedospros/Perespros выводятся как признаки, но не влияют на score —
+        MAD уже захватывает низкий bid_cover через инверсию знака.
+        """
         mad_bc = r.get("MAD_score_cover")
         mad_yl = r.get("MAD_score_yield_spread")
         if mad_bc is None or (isinstance(mad_bc, float) and np.isnan(mad_bc)):
             return None
         mad_bc = float(mad_bc or 0)
         mad_yl = float(mad_yl or 0)
-        fn = int(r.get("Flag_Nedospros", 0) or 0)
-        fp = int(r.get("Flag_Perespros", 0) or 0)
-        s = _sigmoid(0.65 * (-mad_bc) + 0.35 * mad_yl)
-        if fn: s = min(s + 0.15, 1.0)
-        if fp: s = max(s - 0.05, 0.0)
-        return float(np.clip(s, 0.0, 1.0))
+        return float(np.clip(_sigmoid(0.65 * (-mad_bc) + 0.35 * mad_yl), 0.0, 1.0))
 
     def _score_m5(self, r: dict) -> float:
         """MAD_score_ЦБ × 0.88 + MAD_score_Росказна × 0.12 + Flag_Budget_Drain."""

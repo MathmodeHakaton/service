@@ -2,11 +2,15 @@
 М3 — Размещение ОФЗ Минфин
 
 Выход по ТЗ (pd.DataFrame):
-  date                  — дата аукциона
-  MAD_score_cover       — MAD(bid_cover = спрос/предложение, окно 36), SNR=1.63
-  MAD_score_yield_spread— MAD(отклонение доходности от кривой, окно 36), SNR=1.02
-  Flag_Nedospros        — bid_cover < 1.2  (по ТЗ: cover < 1.2)
-  Flag_Perespros        — bid_cover > 2.0  (по ТЗ: cover > 2.0)
+  date                   — дата аукциона
+  MAD_score_cover        — MAD(cover_ratio = спрос/размещение, окно 36), SNR=1.63
+  MAD_score_yield_spread — MAD(отклонение доходности от скользящей средней, окно 36)
+  Flag_Nedospros         — cover_ratio < 1.2  (мало спроса относительно размещённого)
+  Flag_Perespros         — cover_ratio > 2.0  (переспрос, избыток ликвидности)
+
+Два вида покрытия:
+  bid_cover   = спрос / предложение  — объёмный, норма для РФ < 1.0 (лимит всегда большой)
+  cover_ratio = спрос / размещение   — ценовой, всегда >= 1, используется для MAD и флагов
 """
 
 from typing import Dict, Any
@@ -18,8 +22,8 @@ from .base import BaseModule
 from ..normalization.mad import mad_normalize
 
 MAD_WINDOW           = 36
-BID_COVER_STRESS     = 1.2
-COVER_HIGH_THRESHOLD = 2.0
+COVER_STRESS         = 1.2   # Flag_Nedospros: cover_ratio < 1.2
+COVER_HIGH           = 2.0   # Flag_Perespros: cover_ratio > 2.0
 YIELD_SPREAD_WINDOW  = 52
 
 TZ_COLUMNS = ["date", "MAD_score_cover", "MAD_score_yield_spread",
@@ -51,8 +55,6 @@ class M3OFZ(BaseModule):
         out = [c for c in TZ_COLUMNS if c in df.columns]
         return df[out].copy()
 
-    # ── внутренние вычисления ───────────────────────────────────────────────
-
     def _calculate(self, ofz_df: pd.DataFrame) -> pd.DataFrame:
         df = ofz_df.copy().sort_values("date").reset_index(drop=True)
 
@@ -61,7 +63,15 @@ class M3OFZ(BaseModule):
         ).str.upper().str.contains("АУКЦИОН|AUCTION", na=False)
         df["is_auction"] = is_auction
 
-        # bid_cover = спрос / предложение (по ТЗ: cover ratio = спрос/предложение)
+        # cover_ratio = спрос / размещение (если не пришло от fetcher — считаем сами)
+        if "cover_ratio" not in df.columns:
+            if "demand_volume" in df.columns and "placement_volume" in df.columns:
+                df["cover_ratio"] = np.where(
+                    is_auction & df["placement_volume"].notna() & (df["placement_volume"] > 0),
+                    df["demand_volume"] / df["placement_volume"], np.nan
+                )
+
+        # bid_cover = спрос / предложение (для справки и графика)
         if "bid_cover" not in df.columns:
             if "demand_volume" in df.columns and "offer_volume" in df.columns:
                 df["bid_cover"] = np.where(
@@ -69,24 +79,27 @@ class M3OFZ(BaseModule):
                     df["demand_volume"] / df["offer_volume"], np.nan
                 )
 
-        auctions     = df[is_auction].copy()
-        bc_series    = auctions.get("bid_cover",  pd.Series(np.nan, index=auctions.index))
-        yl_series    = auctions.get("avg_yield",  pd.Series(np.nan, index=auctions.index))
+        auctions = df[is_auction].copy()
+
+        # MAD_score_cover: по cover_ratio (согласован с флагами)
+        cr_series = auctions.get("cover_ratio", pd.Series(np.nan, index=auctions.index))
+        yl_series = auctions.get("avg_yield",   pd.Series(np.nan, index=auctions.index))
 
         # yield_spread = отклонение от скользящей средней ≈ спред к кривой ОФЗ
         yield_baseline = yl_series.rolling(window=YIELD_SPREAD_WINDOW, min_periods=4).mean()
         yield_spread   = yl_series - yield_baseline
 
-        # MAD_score_cover: по ТЗ — cover ratio (bid_cover для РФ)
-        auctions["MAD_score_cover"]        = mad_normalize(bc_series,    window=MAD_WINDOW)
-        auctions["MAD_score_yield_spread"] = mad_normalize(yield_spread,  window=MAD_WINDOW)
+        auctions["MAD_score_cover"]        = mad_normalize(cr_series,   window=MAD_WINDOW)
+        auctions["MAD_score_yield_spread"] = mad_normalize(yield_spread, window=MAD_WINDOW)
 
-        df = df.merge(
-            auctions[["date", "MAD_score_cover", "MAD_score_yield_spread"]],
-            on="date", how="left"
-        )
+        # Присваиваем по индексу — избегаем декартова произведения при merge по дате
+        df["MAD_score_cover"]        = np.nan
+        df["MAD_score_yield_spread"] = np.nan
+        df.loc[auctions.index, "MAD_score_cover"]        = auctions["MAD_score_cover"].values
+        df.loc[auctions.index, "MAD_score_yield_spread"] = auctions["MAD_score_yield_spread"].values
 
-        bid_cover_col     = df.get("bid_cover", pd.Series(np.nan, index=df.index))
-        df["Flag_Nedospros"] = (bid_cover_col < BID_COVER_STRESS).fillna(False).astype(int)
-        df["Flag_Perespros"] = (bid_cover_col > COVER_HIGH_THRESHOLD).fillna(False).astype(int)
+        # Флаги по cover_ratio (спрос/размещение) — порог 1.2 и 2.0 из ТЗ
+        cr_col = df.get("cover_ratio", pd.Series(np.nan, index=df.index))
+        df["Flag_Nedospros"] = (cr_col < COVER_STRESS).fillna(False).astype(int)
+        df["Flag_Perespros"] = (cr_col > COVER_HIGH).fillna(False).astype(int)
         return df

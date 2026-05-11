@@ -76,6 +76,16 @@ class Pipeline:
         if cbr.status in ("success", "partial") and cbr.data:
             data.update(cbr.data)
 
+        # Полные данные репо со спросом и cover_ratio
+        try:
+            repo_full = pd.read_csv(
+                f"{self.cbr_fetcher.cache_dir}/repo_full.csv",
+                parse_dates=["date"]
+            )
+            data["repo_full"] = repo_full
+        except Exception:
+            data["repo_full"] = pd.DataFrame()
+
         minfin = self.minfin_fetcher.fetch()
         if minfin.data:
             data["ofz"] = minfin.data.get("ofz")
