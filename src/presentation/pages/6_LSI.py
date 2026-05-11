@@ -1,13 +1,11 @@
 from __future__ import annotations
+from config.settings import get_settings
 import streamlit as st
 import sys
 from pathlib import Path
 from datetime import timedelta
 import pandas as pd
 import plotly.graph_objects as go
-from src.presentation.llm_commentary import (
-    build_prompt, generate_commentary, llm_available, LLM_MODEL,
-)
 """
 LSI · Liquidity Stress Index — финальная страница агрегационного слоя.
 
@@ -84,7 +82,8 @@ def _do_refresh(mode: str, spinner_text: str):
     from src.application.lsi_refresh import refresh_lsi
     with st.spinner(spinner_text):
         rep = refresh_lsi(mode=mode)
-    secs = (pd.Timestamp(rep.finished_at) - pd.Timestamp(rep.started_at)).total_seconds()
+    secs = (pd.Timestamp(rep.finished_at) -
+            pd.Timestamp(rep.started_at)).total_seconds()
     if rep.ok:
         st.success(f"{rep.mode.capitalize()} готов за {secs:.0f} с. "
                    f"Артефактов скопировано: {rep.artifacts_copied}.")
@@ -224,7 +223,6 @@ with st.expander("🧪 Backtest на стресс-эпизодах ТЗ"):
 st.divider()
 st.subheader("🤖 Комментарий аналитика (Yandex AI Studio)")
 
-from config.settings import get_settings
 _s = get_settings()
 api_key = _s.yandex_api_key
 folder_id = _s.yandex_folder_id
