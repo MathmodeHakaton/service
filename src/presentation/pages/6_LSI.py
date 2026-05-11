@@ -155,14 +155,6 @@ fig_c.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=20),
                     xaxis_title="Вклад в LSI (пунктов)")
 st.plotly_chart(fig_c, use_container_width=True)
 
-with st.expander("📐 Глобальная важность модулей (mean |SHAP| по всей истории)"):
-    st.dataframe(mod_imp.round(3), use_container_width=True, hide_index=True)
-
-with st.expander("🔬 Top-фичи по mean |SHAP|"):
-    st.dataframe(feat_imp.head(15).round(
-        3), use_container_width=True, hide_index=True)
-
-
 # LSI TIMESERIES
 st.subheader("История LSI")
 
@@ -193,91 +185,3 @@ fig_ts.add_hline(y=70, line_dash="dash", line_color="#e74c3c")
 fig_ts.update_layout(height=420, yaxis=dict(range=[0, 105], title="LSI"),
                      xaxis_title="Дата", legend=dict(x=0, y=1.12, orientation="h"))
 st.plotly_chart(fig_ts, use_container_width=True)
-
-with st.expander("🧪 Backtest на стресс-эпизодах ТЗ"):
-    st.dataframe(backtest, use_container_width=True, hide_index=True)
-    st.caption(
-        "verdict=OK_red_reached — эпизод корректно отмечен красной зоной (>=70).")
-
-
-# LLM КОММЕНТАРИЙ
-st.divider()
-st.subheader("🤖 Комментарий LLM-аналитика")
-
-
-tax_df = load_tax_calendar()
-if not tax_df.empty and "date" in tax_df.columns:
-    tax_df = tax_df.copy()
-    tax_df["date"] = pd.to_datetime(tax_df["date"], errors="coerce")
-    today = pd.Timestamp(latest_date)
-    upcoming_tax = tax_df[(tax_df["date"] >= today) &
-                          (tax_df["date"] <= today + timedelta(days=21))]\
-        .head(5)
-    upcoming_tax_str = "; ".join(
-        f"{r['date'].strftime('%d.%m')} {r.get('tax_type', '')}".strip()
-        for _, r in upcoming_tax.iterrows()
-    ) or "нет в ближайшие 3 недели"
-else:
-    upcoming_tax_str = "нет данных"
-
-active_flags = []
-flag_cols = {
-    "m1_end_of_period_flag": "M1.EndOfPeriod",
-    "m2_repo_high_utilization_flag": "M2.HighUtilization",
-    "m3_nedospros_flag": "M3.Недоспрос",
-    "m3_perespros_flag": "M3.Переспрос",
-    "m4_tax_week_flag": "M4.TaxWeek",
-    "m4_end_of_month_flag": "M4.EndOfMonth",
-    "m4_end_of_quarter_flag": "M4.EndOfQuarter",
-    "m5_budget_drain_flag": "M5.BudgetDrain",
-}
-full_latest_row = extract[extract["date"] == latest["date"]].iloc[0]
-ts_full = pd.read_csv(ART / "lsi_timeseries.csv", parse_dates=["date"])
-ts_full_row = ts_full[ts_full["date"] == latest["date"]]
-if not ts_full_row.empty:
-    src_row = ts_full_row.iloc[0]
-    for col, label in flag_cols.items():
-        if col in src_row.index and float(src_row.get(col, 0) or 0) >= 1:
-            active_flags.append(label)
-active_flags_str = ", ".join(
-    active_flags) if active_flags else "нет активных флагов"
-
-prompt = build_prompt(
-    lsi_value=lsi_val,
-    status=STATUS_RU.get(status, status),
-    contributions=contributions,
-    active_flags=active_flags_str,
-    upcoming_tax_dates=upcoming_tax_str,
-    upcoming_ofz_auctions="расписание Минфина — см. модуль М3",
-)
-
-with st.expander("📝 Промпт для LLM"):
-    st.code(prompt, language="text")
-
-available, info = llm_available()
-if not available:
-    st.warning(
-        f"LLM ({LLM_MODEL}) недоступна через Ollama. {info}\n\n"
-        f"Запустите: `ollama serve` и `ollama pull {LLM_MODEL}` "
-        f"(квантованный Qwen ~2 ГБ). После этого комментарий появится автоматически."
-    )
-    st.info(
-        f"**Фолбэк (без LLM):** LSI={lsi_val:.1f} ({STATUS_RU.get(status, status)}). "
-        f"Главный драйвер вверх: "
-        f"{max(contributions.items(), key=lambda x: x[1])[0]} "
-        f"({max(contributions.values()):+.2f} пт). "
-        f"Активные флаги: {active_flags_str}. "
-        f"Ближайшие налоговые даты: {upcoming_tax_str}."
-    )
-else:
-    if st.button("🔄 Сгенерировать комментарий", type="primary"):
-        st.cache_data.clear()
-    with st.spinner(f"Генерирует {LLM_MODEL}…"):
-        commentary = generate_commentary(prompt)
-    st.markdown(
-        f"<div style='background:#f4f6f8;padding:18px;border-radius:10px;"
-        f"border-left:4px solid #2c3e50;'>{commentary}</div>",
-        unsafe_allow_html=True,
-    )
-    st.caption(f"Модель: {LLM_MODEL} (Ollama) · "
-               f"Промпт построен по структуре ТЗ (раздел «БОНУС LLM-модуль»).")

@@ -43,29 +43,12 @@ except Exception:
 # Выбор периода
 st.markdown("### Выберите период")
 
-col_btns = st.columns(5)
-presets = {"6 месяцев": 180, "1 год": 365,
-           "3 года": 1095, "5 лет": 1825, "Всё": None}
-selected_preset = st.session_state.get("m2_preset", "3 года")
-
-for i, (label, days) in enumerate(presets.items()):
-    with col_btns[i]:
-        if st.button(label, use_container_width=True,
-                     type="primary" if label == selected_preset else "secondary"):
-            st.session_state["m2_preset"] = label
-            selected_preset = label
-
 date_max = ruonia["date"].max()
 date_min = ruonia["date"].min()
-preset_days = presets[selected_preset]
-if preset_days:
-    date_start = max(date_min, date_max - pd.Timedelta(days=preset_days))
-else:
-    date_start = date_min
 
 col_d1, col_d2 = st.columns(2)
 with col_d1:
-    d_from = st.date_input("От", value=date_start.date(),
+    d_from = st.date_input("От", value=date_min.date(),
                            min_value=date_min.date(), max_value=date_max.date())
 with col_d2:
     d_to = st.date_input("До", value=date_max.date(),
