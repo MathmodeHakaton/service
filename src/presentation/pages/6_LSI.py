@@ -3,7 +3,6 @@ from config.settings import get_settings
 import streamlit as st
 import sys
 from pathlib import Path
-from datetime import timedelta
 import pandas as pd
 import plotly.graph_objects as go
 """
@@ -16,7 +15,6 @@ LSI · Liquidity Stress Index — финальная страница агрег
         парсеры → upsert ml_model/data → run_pipeline.py → copy outputs.
     • Авто-комментарий — Yandex AI Studio через `ml_model.src.llm_commentator`.
 """
-from __future__ import annotations
 
 import sys
 from pathlib import Path
