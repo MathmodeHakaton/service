@@ -25,29 +25,15 @@ if df5.empty or "balance" not in df5.columns:
     st.info("Нет данных")
     st.stop()
 
-# ── Выбор периода ─────────────────────────────────────────────────────────
+# Выбор периода
 st.markdown("### Выберите период")
-col_btns = st.columns(5)
-presets = {"6 месяцев": 180, "1 год": 365,
-           "3 года": 1095, "5 лет": 1825, "Всё": None}
-selected = st.session_state.get("m5_preset", "3 года")
-
-for i, (label, days) in enumerate(presets.items()):
-    with col_btns[i]:
-        if st.button(label, use_container_width=True,
-                     type="primary" if label == selected else "secondary", key=f"m5_{label}"):
-            st.session_state["m5_preset"] = label
-            selected = label
 
 date_max = pd.Timestamp(df5["date"].max())
 date_min = pd.Timestamp(df5["date"].min())
-preset_days = presets[selected]
-date_start = date_min if preset_days is None else max(
-    date_min, date_max - pd.Timedelta(days=preset_days))
 
 col_d1, col_d2 = st.columns(2)
 with col_d1:
-    d_from = st.date_input("От", value=date_start.date(),
+    d_from = st.date_input("От", value=date_min.date(),
                            min_value=date_min.date(), max_value=date_max.date(), key="m5_from")
 with col_d2:
     d_to = st.date_input("До", value=date_max.date(),
@@ -56,7 +42,6 @@ with col_d2:
 df5 = df5[(df5["date"] >= pd.Timestamp(d_from)) &
           (df5["date"] <= pd.Timestamp(d_to))].copy()
 
-# Инвертируем знак: профицит сверху (+), дефицит снизу (−)
 df5["balance_inv"] = -df5["balance"]
 bal_last = df5["balance_inv"].iloc[-1]
 
@@ -86,6 +71,6 @@ fig5.update_layout(
     height=400,
     legend=dict(x=0, y=1.12, orientation="h"),
 )
-st.plotly_chart(fig5, use_container_width=True)
+st.plotly_chart(fig5, width='stretch')
 st.caption(
     "Выше нуля = профицит (деньги с избытком). Ниже нуля = дефицит (банки занимают у ЦБ).")

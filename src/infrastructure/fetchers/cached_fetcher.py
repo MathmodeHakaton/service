@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta
 
 import pandas as pd
+from plotly import data
 from sqlalchemy.orm import Session
 
 from src.infrastructure.fetchers.base import BaseFetcher, FetcherResult
@@ -59,7 +60,7 @@ class CachedFetcher:
         logger.info("Cache miss for '%s', fetching...", self.source_key)
         result = self.fetcher.fetch()
 
-        if result.status == "success" and result.data is not None:
+        if result.status in ("success", "partial") and result.data is not None:
             payload = self._df_to_payload(result.data)
             expires_at = datetime.now() + self.ttl
 
@@ -71,7 +72,7 @@ class CachedFetcher:
                 source_url=result.source_url,
             )
             logger.info(
-                "Cached '%s': %d rows, TTL until %s",
+                "Cached '%s': %d items, TTL until %s",
                 self.source_key, len(payload), expires_at,
             )
         else:
@@ -111,15 +112,15 @@ class CachedFetcher:
             )
             return [{"__key__": "__single__", "__records__": records}]
 
-        # dict[str, DataFrame] — сериализуем каждый
         result = []
         for key, df in data.items():
-            if isinstance(df, pd.DataFrame) and not df.empty:
-                records = json.loads(
-                    df.to_json(orient="records", date_format="iso",
-                               force_ascii=False)
-                )
-                result.append({"__key__": key, "__records__": records})
+            if not isinstance(df, pd.DataFrame):
+                continue
+            records = [] if df.empty else json.loads(
+                df.to_json(orient="records", date_format="iso",
+                           force_ascii=False)
+            )
+            result.append({"__key__": key, "__records__": records})
         return result
 
     @staticmethod
@@ -130,16 +131,15 @@ class CachedFetcher:
         if not payload:
             return pd.DataFrame()
 
-        # Один DataFrame
         if len(payload) == 1 and payload[0].get("__key__") == "__single__":
             df = pd.DataFrame(payload[0]["__records__"])
             return CachedFetcher._restore_dates(df)
 
-        # dict[str, DataFrame]
         result = {}
         for item in payload:
             key = item["__key__"]
-            df = pd.DataFrame(item["__records__"])
+            records = item.get("__records__", [])
+            df = pd.DataFrame(records) if records else pd.DataFrame()
             result[key] = CachedFetcher._restore_dates(df)
         return result
 

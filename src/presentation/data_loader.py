@@ -59,7 +59,6 @@ def load_all():
                             data.get("ruonia",   pd.DataFrame()),
                             data.get("keyrate",  pd.DataFrame()))
 
-        # feature/merge: поддержка repo_full
         repo_full = data.get("repo_full", pd.DataFrame())
         if repo_full is not None and not repo_full.empty:
             df2 = m2._calculate_full(

@@ -18,16 +18,16 @@ from typing import Dict, Any
 import numpy as np
 import pandas as pd
 
-from .base import BaseModule
-from ..normalization.mad import mad_normalize
+from src.domain.modules.base import BaseModule
+from src.domain.normalization.mad import mad_normalize
 
-MAD_WINDOW           = 36
-COVER_STRESS         = 1.2   # Flag_Nedospros: cover_ratio < 1.2
-COVER_HIGH           = 2.0   # Flag_Perespros: cover_ratio > 2.0
-YIELD_SPREAD_WINDOW  = 52
+MAD_WINDOW = 36
+COVER_STRESS = 1.2
+COVER_HIGH = 2.0
+YIELD_SPREAD_WINDOW = 52
 
 TZ_COLUMNS = ["date", "MAD_score_cover", "MAD_score_yield_spread",
-               "Flag_Nedospros", "Flag_Perespros"]
+              "Flag_Nedospros", "Flag_Perespros"]
 
 
 class M3OFZ(BaseModule):
@@ -63,43 +63,49 @@ class M3OFZ(BaseModule):
         ).str.upper().str.contains("АУКЦИОН|AUCTION", na=False)
         df["is_auction"] = is_auction
 
-        # cover_ratio = спрос / размещение (если не пришло от fetcher — считаем сами)
+        # cover_ratio = спрос / размещение
         if "cover_ratio" not in df.columns:
             if "demand_volume" in df.columns and "placement_volume" in df.columns:
                 df["cover_ratio"] = np.where(
-                    is_auction & df["placement_volume"].notna() & (df["placement_volume"] > 0),
+                    is_auction & df["placement_volume"].notna() & (
+                        df["placement_volume"] > 0),
                     df["demand_volume"] / df["placement_volume"], np.nan
                 )
 
-        # bid_cover = спрос / предложение (для справки и графика)
+        # bid_cover = спрос / предложение
         if "bid_cover" not in df.columns:
             if "demand_volume" in df.columns and "offer_volume" in df.columns:
                 df["bid_cover"] = np.where(
-                    is_auction & df["offer_volume"].notna() & (df["offer_volume"] > 0),
+                    is_auction & df["offer_volume"].notna() & (
+                        df["offer_volume"] > 0),
                     df["demand_volume"] / df["offer_volume"], np.nan
                 )
 
         auctions = df[is_auction].copy()
 
-        # MAD_score_cover: по cover_ratio (согласован с флагами)
-        cr_series = auctions.get("cover_ratio", pd.Series(np.nan, index=auctions.index))
-        yl_series = auctions.get("avg_yield",   pd.Series(np.nan, index=auctions.index))
+        # MAD_score_cover: по cover_ratio
+        cr_series = auctions.get(
+            "cover_ratio", pd.Series(np.nan, index=auctions.index))
+        yl_series = auctions.get(
+            "avg_yield",   pd.Series(np.nan, index=auctions.index))
 
-        # yield_spread = отклонение от скользящей средней ≈ спред к кривой ОФЗ
-        yield_baseline = yl_series.rolling(window=YIELD_SPREAD_WINDOW, min_periods=4).mean()
-        yield_spread   = yl_series - yield_baseline
+        yield_baseline = yl_series.rolling(
+            window=YIELD_SPREAD_WINDOW, min_periods=4).mean()
+        yield_spread = yl_series - yield_baseline
 
-        auctions["MAD_score_cover"]        = mad_normalize(cr_series,   window=MAD_WINDOW)
-        auctions["MAD_score_yield_spread"] = mad_normalize(yield_spread, window=MAD_WINDOW)
+        auctions["MAD_score_cover"] = mad_normalize(
+            cr_series,   window=MAD_WINDOW)
+        auctions["MAD_score_yield_spread"] = mad_normalize(
+            yield_spread, window=MAD_WINDOW)
 
-        # Присваиваем по индексу — избегаем декартова произведения при merge по дате
-        df["MAD_score_cover"]        = np.nan
+        df["MAD_score_cover"] = np.nan
         df["MAD_score_yield_spread"] = np.nan
-        df.loc[auctions.index, "MAD_score_cover"]        = auctions["MAD_score_cover"].values
-        df.loc[auctions.index, "MAD_score_yield_spread"] = auctions["MAD_score_yield_spread"].values
+        df.loc[auctions.index, "MAD_score_cover"] = auctions["MAD_score_cover"].values
+        df.loc[auctions.index,
+               "MAD_score_yield_spread"] = auctions["MAD_score_yield_spread"].values
 
-        # Флаги по cover_ratio (спрос/размещение) — порог 1.2 и 2.0 из ТЗ
         cr_col = df.get("cover_ratio", pd.Series(np.nan, index=df.index))
-        df["Flag_Nedospros"] = (cr_col < COVER_STRESS).fillna(False).astype(int)
+        df["Flag_Nedospros"] = (
+            cr_col < COVER_STRESS).fillna(False).astype(int)
         df["Flag_Perespros"] = (cr_col > COVER_HIGH).fillna(False).astype(int)
         return df

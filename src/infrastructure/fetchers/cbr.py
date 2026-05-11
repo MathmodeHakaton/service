@@ -72,7 +72,6 @@ class CBRFetcher(BaseFetcher):
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── Публичный метод ────────────────────────────────────────────────────
     def fetch(self) -> FetcherResult:
         """Получить все данные ЦБ: резервы, RUONIA, репо, ключевую ставку, баланс."""
         data = {}
@@ -103,7 +102,6 @@ class CBRFetcher(BaseFetcher):
             source_url="https://www.cbr.ru",
         )
 
-    # ── М1: Обязательные резервы ──────────────────────────────────────────
     def fetch_reserves(self) -> pd.DataFrame:
         """Скачивает Excel с обязательными резервами."""
         cache = self.cache_dir / "required_reserves.xlsx"
@@ -166,7 +164,6 @@ class CBRFetcher(BaseFetcher):
                 df[col] = pd.to_numeric(df[col], errors="coerce")
         return df.sort_values("date").reset_index(drop=True)
 
-    # ── М1: RUONIA ────────────────────────────────────────────────────────
     def fetch_ruonia(self, date_from: str = "01.01.2014") -> pd.DataFrame:
         """Скачивает RUONIA (HTML-парсинг)."""
         cache = self.cache_dir / "ruonia.csv"
@@ -202,7 +199,6 @@ class CBRFetcher(BaseFetcher):
                 return pd.read_csv(cache, parse_dates=["date"])
             raise
 
-    # ── М2: Репо ──────────────────────────────────────────────────────────
     def fetch_repo(self, date_from: str = "21.11.2002") -> pd.DataFrame:
         """Скачивает итоги аукционов репо (все сроки, с 2002)."""
         cache = self.cache_dir / "repo_results.csv"
@@ -262,7 +258,6 @@ class CBRFetcher(BaseFetcher):
             return pd.read_csv(cache, parse_dates=["date"])
         return pd.DataFrame(columns=["date", "term_days", "limit_bln", "min_rate"])
 
-    # ── М2: Ключевая ставка ───────────────────────────────────────────────
     def fetch_keyrate(self, date_from: str = "01.01.2010") -> pd.DataFrame:
         """Скачивает историю ключевой ставки."""
         cache = self.cache_dir / "keyrate.csv"
@@ -280,7 +275,6 @@ class CBRFetcher(BaseFetcher):
             return pd.read_csv(cache, parse_dates=["date"])
         raise RuntimeError("Нет данных ключевой ставки")
 
-    # ── М5: Баланс ликвидности ────────────────────────────────────────────
     def fetch_bliquidity(self, date_from: str = "01.02.2014") -> pd.DataFrame:
         cache = self.cache_dir / "bliquidity.csv"
 
@@ -326,15 +320,12 @@ class CBRFetcher(BaseFetcher):
                 if not cells:
                     continue
                 first = cells[0].strip()
-                # Пропускаем заголовки и строки с формулами
                 if not first or first in ("1", "Дата", "") or "=" in first:
                     continue
-                # Фильтруем по дате в первой ячейке
                 try:
                     pd.to_datetime(first, format="%d.%m.%Y")
                 except Exception:
                     continue
-                # Дополняем до 15 ячеек если не хватает
                 while len(cells) < 15:
                     cells.append("")
                 records.append({

@@ -65,15 +65,13 @@ class LSIEngine:
         m4 = _latest(signals.get("M4_TAX"))
         m5 = _latest(signals.get("M5_TREASURY"))
 
-        # ── per-module score из сырых MAD-признаков ──────────────────────────
         score_m1 = self._score_m1(m1)
         score_m2 = self._score_m2(m2)
-        score_m3 = self._score_m3(m3)   # None если нет данных
+        score_m3 = self._score_m3(m3)
         score_m5 = self._score_m5(m5)
 
         seasonal_factor = float(m4.get("Seasonal_Factor", 1.0) or 1.0)
 
-        # ── взвешенная сумма с ренормализацией при отсутствии модуля ─────────
         available = {
             "M1_RESERVES": score_m1,
             "M2_REPO":     score_m2,
@@ -113,8 +111,6 @@ class LSIEngine:
             contributions=contributions,
             raw_scores=raw_scores,
         )
-
-    # ── формулы агрегации по модулю ──────────────────────────────────────────
 
     def _score_m1(self, r: dict) -> float:
         """MAD_score_RUONIA × 0.60 + MAD_score_спред × 0.40 + бонус флагов."""

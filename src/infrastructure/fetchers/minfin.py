@@ -75,13 +75,12 @@ class MinfinFetcher(BaseFetcher):
         """
         cache = self.cache_dir / "ofz_auctions.csv"
         try:
-            # Небольшая задержка перед запросом
             time.sleep(0.5)
 
             r = self.session.get(
                 MINFIN_OFZ_URL, timeout=self.timeout, verify=False)
             r.raise_for_status()
-            r.encoding = 'utf-8'  # Явно указываем кодировку
+            r.encoding = 'utf-8'
 
             logger.debug(
                 f"Minfin response status: {r.status_code}, content-length: {len(r.text)}")
@@ -106,7 +105,6 @@ class MinfinFetcher(BaseFetcher):
     def _parse_minfin_html(self, html: str) -> pd.DataFrame | None:
         soup = BeautifulSoup(html, "html.parser")
 
-        # Ищем таблицу по различным селекторам
         tables = soup.find_all("table")
         logger.debug(f"Найдено {len(tables)} таблиц на странице")
 
@@ -114,17 +112,14 @@ class MinfinFetcher(BaseFetcher):
             logger.warning("Таблицы не найдены на странице")
             return None
 
-        # Перебираем все таблицы и ищем ту, которая содержит нужные данные
         for idx, table in enumerate(tables):
             logger.debug(f"Проверяю таблицу {idx}")
             try:
-                # Получаем все строки
                 all_rows = table.find_all("tr")
                 if len(all_rows) < 2:
                     logger.debug(f"Таблица {idx}: слишком мало строк")
                     continue
 
-                # Ищем заголовки в th или первой строке td
                 header_row = all_rows[0]
                 headers = [th.get_text(strip=True)
                            for th in header_row.find_all("th")]
@@ -139,7 +134,6 @@ class MinfinFetcher(BaseFetcher):
                 logger.debug(
                     f"Таблица {idx} заголовки ({len(headers)}): {headers[:3]}...")
 
-                # Проверяем наличие ключевых колонок (должна быть дата или размещение)
                 headers_lower = [h.lower() for h in headers]
                 has_date = any(
                     "дата" in h or "date" in h for h in headers_lower)
@@ -149,14 +143,12 @@ class MinfinFetcher(BaseFetcher):
                 if not (has_date or has_placement):
                     continue
 
-                # Парсим строки данных
                 rows = []
                 for tr in all_rows[1:]:
                     cells = [td.get_text(strip=True)
                              for td in tr.find_all(["td", "th"])]
                     if not cells:
                         continue
-                    # Фильтруем пустые строки
                     if all(not c or c.isspace() for c in cells):
                         continue
                     rows.append(cells)
@@ -168,10 +160,8 @@ class MinfinFetcher(BaseFetcher):
                 logger.info(
                     f"Таблица {idx}: найдено {len(rows)} строк, {len(headers)} колонок")
 
-                # Обработаем дублирующиеся имена колонок
                 headers = self._deduplicate_headers(headers)
 
-                # Создаём DataFrame, выравнивая количество колонок
                 max_cols = max(len(row) for row in rows)
                 headers = headers[:max_cols]
                 while len(headers) < max_cols:
@@ -212,13 +202,11 @@ class MinfinFetcher(BaseFetcher):
         if df.empty:
             return None
 
-        # Дедупликация ДО переименования
         if df.columns.duplicated().any():
             df.columns = self._deduplicate_headers(df.columns.tolist())
 
         logger.debug(f"Исходные колонки: {df.columns.tolist()}")
 
-        # Первый проход: переименование колонок
         rename = {}
         for c in df.columns:
             if not isinstance(c, str):
@@ -242,15 +230,12 @@ class MinfinFetcher(BaseFetcher):
         df = df.rename(columns=rename)
         logger.debug(f"После переименования: {df.columns.tolist()}")
 
-        # Обработка даты
         if "date" in df.columns:
             try:
-                # Если дублирующиеся колонки — берём первую явно
                 date_col = df["date"]
                 if isinstance(date_col, pd.DataFrame):
                     logger.warning("date — DataFrame, беру первую колонку")
                     date_col = date_col.iloc[:, 0]
-                    # Убираем дубликаты — оставляем только одну колонку date
                     df = df.loc[:, ~df.columns.duplicated()]
                     df["date"] = date_col
 
@@ -258,7 +243,7 @@ class MinfinFetcher(BaseFetcher):
                     df["date"].astype(str).str.strip(),
                     dayfirst=True,
                     errors="coerce",
-                    format="mixed",   # ← явно указываем mixed чтобы убрать warning
+                    format="mixed",
                 )
                 valid_dates = df["date"].notna().sum()
                 logger.debug(
@@ -271,20 +256,17 @@ class MinfinFetcher(BaseFetcher):
                 logger.warning(f"Ошибка парсинга даты: {e}")
                 return None
 
-        # Обработка числовых колонок
         numeric_cols = ["offer_volume", "demand_volume",
                         "placement_volume", "avg_yield"]
         for col in numeric_cols:
             if col not in df.columns:
                 continue
             try:
-                # Убедимся, что это Series
                 col_data = df[col]
                 if isinstance(col_data, pd.DataFrame):
                     logger.warning(f"{col} — DataFrame, беру первую колонку")
                     col_data = col_data.iloc[:, 0]
 
-                # Конвертируем в строки и очищаем
                 col_str = col_data.astype(str).str.strip()
                 col_str = col_str.str.replace(r"[\s\xa0]", "", regex=True)
                 col_str = col_str.str.replace(",", ".")
@@ -296,7 +278,6 @@ class MinfinFetcher(BaseFetcher):
                 logger.warning(f"Ошибка конвертации колонки {col}: {e}")
                 df[col] = None
 
-        # Вычисление производных колонок
         if "demand_volume" in df.columns and "placement_volume" in df.columns:
             try:
                 demand = pd.to_numeric(df["demand_volume"], errors="coerce")
@@ -314,7 +295,6 @@ class MinfinFetcher(BaseFetcher):
             except Exception as e:
                 logger.warning(f"Ошибка вычисления bid_cover: {e}")
 
-        # Фильтруем по наличию даты
         if "date" in df.columns:
             initial_len = len(df)
             df = df.dropna(subset=["date"])

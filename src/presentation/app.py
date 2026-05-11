@@ -2,6 +2,9 @@
 RU Liquidity Sentinel — Streamlit Dashboard
 Запуск: streamlit run src/presentation/app.py --server.port 8501
 """
+import logging
+import os
+import json
 import streamlit as st
 import plotly.graph_objects as go
 import pandas as pd
@@ -9,6 +12,10 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 
 st.set_page_config(
     page_title="RU Liquidity Sentinel",
@@ -17,9 +24,7 @@ st.set_page_config(
 )
 
 
-# ══════════════════════════════════════════════════════════════════
 # ЗАГРУЗКА ДАННЫХ
-# ══════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=1800)
 def load_all():
@@ -33,17 +38,14 @@ def load_all():
     from src.infrastructure.storage.db.engine import get_session
     from datetime import datetime
 
-    # ── Сбор данных через pipeline ──────────────────────────────────────
+    # Сбор данных через pipeline
     session = get_session()
     try:
         p = Pipeline(session=session)
         result = p.execute_full()
         data = result.raw_data
 
-        # Fallback: ОФЗ из локального кэша если Минфин недоступен
         if not data.get("ofz") is not None and not data.get("ofz", pd.DataFrame()).empty:
-            import json
-            import os
             cache_path = os.path.normpath(os.path.join(
                 os.path.dirname(__file__),
                 "../../../liquidity_sentinel/data/m3/m3_data.json"
@@ -62,14 +64,12 @@ def load_all():
                 data["ofz"] = ofz_cached.dropna(
                     subset=["date"]).reset_index(drop=True)
 
-        # ── Модули: полные DataFrame для графиков ────────────────────────────
         m1 = M1Reserves()
         m2 = M2Repo()
         m3 = M3OFZ()
         m4 = M4Tax()
         m5 = M5Treasury()
 
-        # _calculate() возвращает расширенный DataFrame (все колонки для графиков)
         df1 = m1._calculate(data.get("reserves", pd.DataFrame()),
                             data.get("ruonia",   pd.DataFrame()),
                             data.get("keyrate",  pd.DataFrame()))
@@ -84,7 +84,6 @@ def load_all():
         tax_df = data.get("tax_calendar", pd.DataFrame())
         target_date = datetime.now()
 
-        # M4: полный ряд для графика + флаги на сегодня
         dates_range = pd.date_range(
             "2019-01-01", pd.Timestamp.today(), freq="D")
         df4 = m4.compute_series(pd.Series(dates_range),
@@ -93,12 +92,10 @@ def load_all():
             {"tax_calendar": tax_df, "target_date": target_date})
         latest_m4 = m4_today.iloc[-1].to_dict() if not m4_today.empty else {}
 
-        # ── LSI из нового engine (принимает Dict[str, DataFrame]) ───────────
         engine = LSIEngine()
-        signal_dfs = result.signals   # Dict[str, pd.DataFrame] из pipeline
-        lsi_result = result.lsi       # уже посчитан в pipeline
+        signal_dfs = result.signals
+        lsi_result = result.lsi
 
-        # ── Per-module scores через LSIEngine helpers ────────────────────────
         def _latest(df, col):
             if df is None or df.empty or col not in df.columns:
                 return {}
@@ -130,7 +127,7 @@ def load_all():
             "computed_at":   pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
         }
 
-        # ── Backtest ─────────────────────────────────────────────────────────
+        # Backtest
         try:
             bt = _build_backtest(data, engine)
         except Exception:
@@ -189,11 +186,9 @@ def _build_backtest(data: dict, engine=None) -> pd.DataFrame | None:
         m4 = M4Tax()
         tax_df = data.get("tax_calendar", pd.DataFrame())
 
-        # Основная сетка: дни из M5
         base = df5[["date", "MAD_score_ЦБ",
                     "MAD_score_Росказна", "Flag_Budget_Drain"]].copy()
 
-        # M1 → по месяцу
         if not df1.empty:
             m1_cols = [c for c in ["month", "MAD_score_RUONIA", "MAD_score_спред",
                                    "Flag_AboveKey", "Flag_EndOfPeriod"] if c in df1.columns]
@@ -203,7 +198,6 @@ def _build_backtest(data: dict, engine=None) -> pd.DataFrame | None:
             base = base.merge(df1_m, on="month", how="left").drop(
                 columns="month")
 
-        # M2 → merge asof
         if not df2.empty:
             base = pd.merge_asof(
                 base.sort_values("date"),
@@ -263,9 +257,7 @@ def _build_backtest(data: dict, engine=None) -> pd.DataFrame | None:
         return None
 
 
-# ══════════════════════════════════════════════════════════════════
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-# ══════════════════════════════════════════════════════════════════
 
 def status_color(status):
     return {"GREEN": "#27ae60", "YELLOW": "#f39c12", "RED": "#e74c3c"}.get(status, "#95a5a6")
@@ -298,9 +290,7 @@ def gauge_fig(value):
     return fig
 
 
-# ══════════════════════════════════════════════════════════════════
 # ЗАГРУЗКА
-# ══════════════════════════════════════════════════════════════════
 
 with st.spinner("Загрузка данных с ЦБ РФ и Минфина..."):
     try:
@@ -315,9 +305,7 @@ with st.spinner("Загрузка данных с ЦБ РФ и Минфина...
 if not load_ok:
     st.stop()
 
-# ══════════════════════════════════════════════════════════════════
 # ЗАГОЛОВОК
-# ══════════════════════════════════════════════════════════════════
 st.title("RU Liquidity Sentinel")
 st.caption(
     f"Обновлено: {lsi['computed_at']}  |  Источники: ЦБ РФ · Минфин · ФНС")
@@ -354,7 +342,7 @@ with col_status:
     </div>
     """, unsafe_allow_html=True)
 
-# ── Авто-комментарий
+# Авто-комментарий
 scores = lsi["scores"]
 _top = max(scores.items(), key=lambda x: x[1])
 _tax_s = f"Налоговое давление (SF=×{sf:.1f})." if sf > 1.0 else "Налогового давления нет."
@@ -368,9 +356,7 @@ st.info(
 
 st.divider()
 
-# ══════════════════════════════════════════════════════════════════
 # ВКЛАД МОДУЛЕЙ
-# ══════════════════════════════════════════════════════════════════
 st.subheader("Вклад модулей в индекс стресса")
 
 MODULE_DESC = {
@@ -417,7 +403,7 @@ fig_bar = go.Figure(go.Bar(
 ))
 fig_bar.update_layout(height=260, margin=dict(t=10, b=10, l=10, r=10),
                       yaxis_title="Вклад в LSI (пунктов)", showlegend=False)
-st.plotly_chart(fig_bar, use_container_width=True)
+st.plotly_chart(fig_bar, width='stretch')
 
 with st.expander("📐 Методология агрегации (формула LSI)"):
     m1v, m2v, m3v, m5v = (scores.get(k, 0) for k in ["M1", "M2", "M3", "M5"])
@@ -443,15 +429,13 @@ LSI = (M1×0.387 + M2×0.374 + M3×0.152 + M5×0.088) × SF_M4
 
 st.divider()
 
-# ══════════════════════════════════════════════════════════════════
 # ВКЛАДКИ МОДУЛЕЙ
-# ══════════════════════════════════════════════════════════════════
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "М1 · Резервы", "М2 · Репо ЦБ", "М3 · ОФЗ",
     "М4 · Налоги", "М5 · Казначейство", "История (Backtest)"
 ])
 
-# ── М1 ────────────────────────────────────────────────────────────
+# М1
 with tab1:
     df1 = r1["signals_df"].dropna(
         subset=["MAD_score_RUONIA"]) if not r1["signals_df"].empty else pd.DataFrame()
@@ -478,7 +462,7 @@ with tab1:
             yaxis2=dict(title="RUONIA, %", overlaying="y", side="right"),
             height=360, legend=dict(x=0, y=1.12, orientation="h"),
         )
-        st.plotly_chart(fig1, use_container_width=True)
+        st.plotly_chart(fig1, width='stretch')
 
     if not df1.empty:
         fig1b = go.Figure()
@@ -487,7 +471,6 @@ with tab1:
             name="MAD_score_RUONIA — аномалия ставки межбанка",
             line=dict(color="crimson", width=1.8),
         ))
-        # ТЗ: MAD_score_спред (ранее MAD_score_rel_spread)
         if "MAD_score_спред" in df1.columns:
             fig1b.add_trace(go.Scatter(
                 x=df1["date"], y=df1["MAD_score_спред"],
@@ -510,10 +493,10 @@ with tab1:
             yaxis=dict(title="Отклонение от нормы (σ)", range=[-5, 11]),
             height=300, legend=dict(x=0, y=1.15, orientation="h"),
         )
-        st.plotly_chart(fig1b, use_container_width=True)
+        st.plotly_chart(fig1b, width='stretch')
         st.caption("MAD_score_RUONIA и MAD_score_спред. 0 = норма · +3σ = стресс")
 
-# ── М2 ────────────────────────────────────────────────────────────
+# М2
 with tab2:
     df2 = r2["signals_df"]
     st.metric("Стресс-оценка М2", f"{scores.get('M2', 0):.1f} / 100")
@@ -548,12 +531,12 @@ with tab2:
             yaxis2=dict(title="MAD (σ)", overlaying="y", side="right"),
             height=380, legend=dict(x=0, y=1.18, orientation="h"),
         )
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width='stretch')
 
     st.caption(
         "Основной сигнал M2 — MAD_score_rate_spread (переплата над ключевой ставкой).")
 
-# ── М3 ────────────────────────────────────────────────────────────
+# М3
 with tab3:
     df3 = r3["signals_df"]
     st.metric("Стресс-оценка М3", f"{scores.get('M3', 0):.1f} / 100")
@@ -563,7 +546,6 @@ with tab3:
         auctions3 = df3.dropna(
             subset=["cover_ratio"]).copy().reset_index(drop=True)
         if len(auctions3):
-            # Два аукциона в один день → разносим по оси x на ±0.3 дня
             auctions3["rank"] = auctions3.groupby("date").cumcount()
             auctions3["n_per_day"] = auctions3.groupby(
                 "date")["rank"].transform("count")
@@ -586,7 +568,7 @@ with tab3:
                 y=auctions3["cover_ratio"],
                 marker_color=colors3,
                 width=[1000 * 3600 * 24 * 0.55] *
-                len(auctions3),  # ширина 0.55 дня в мс
+                len(auctions3),
                 showlegend=False,
             ))
             fig3.add_hline(y=1.2, line_dash="dash", line_color="orange", line_width=1.5,
@@ -599,11 +581,11 @@ with tab3:
                 xaxis=dict(type="date"),
                 height=320,
             )
-            st.plotly_chart(fig3, use_container_width=True)
+            st.plotly_chart(fig3, width='stretch')
             st.markdown(
                 "🔴 Недоспрос (< 1.2) &nbsp;&nbsp; "
                 "🔵 Переспрос (> 2.0) &nbsp;&nbsp; "
-                "⚪ Норма (1.2 – 2.0)"
+                "⚪ Норма (1.2 - 2.0)"
             )
             st.caption(
                 "Два столбика на дату = два выпуска ОФЗ в один день. cover_ratio = спрос / размещение.")
@@ -619,12 +601,12 @@ with tab3:
                 yaxis_title="Доходность, % годовых",
                 height=240, showlegend=False,
             )
-            st.plotly_chart(fig3b, use_container_width=True)
+            st.plotly_chart(fig3b, width='stretch')
             st.caption("MAD_score_cover и MAD_score_yield_spread.")
     else:
         st.info("Нет данных ОФЗ — нужны результаты аукционов Минфина")
 
-# ── М4 ────────────────────────────────────────────────────────────
+# М4
 with tab4:
     df4 = r4["signals_df"]
     tax_df = r4.get("tax_df", pd.DataFrame())
@@ -634,7 +616,6 @@ with tab4:
     st.caption(
         "Источник: Налоговый кодекс РФ — даты ключевых платежей (2014–2027)")
 
-    # Ближайшие налоговые даты
     if tax_df is not None and not tax_df.empty:
         today_ts = pd.Timestamp.today()
         upcoming = tax_df[pd.to_datetime(
@@ -644,7 +625,7 @@ with tab4:
         st.markdown("**Ближайшие налоговые даты:**")
         st.dataframe(upcoming[["date", "tax_type"]].rename(
             columns={"date": "Дата", "tax_type": "Налог"}
-        ).reset_index(drop=True), use_container_width=True, hide_index=True)
+        ).reset_index(drop=True), width='stretch', hide_index=True)
 
     if df4 is not None and not df4.empty:
         fig4 = go.Figure()
@@ -663,11 +644,11 @@ with tab4:
             yaxis=dict(title="SF", range=[0.95, 1.5]),
             height=300, showlegend=False,
         )
-        st.plotly_chart(fig4, use_container_width=True)
+        st.plotly_chart(fig4, width='stretch')
         st.caption(
             "Tax_Week_Flag · End_of_Month_Flag · End_of_Quarter_Flag · Seasonal_Factor")
 
-# ── М5 ────────────────────────────────────────────────────────────
+# М5
 with tab5:
     df5 = r5["signals_df"]
     st.metric("Стресс-оценка М5", f"{scores.get('M5', 0):.1f} / 100")
@@ -700,9 +681,8 @@ with tab5:
             yaxis_title="Баланс, млрд руб.",
             height=340, legend=dict(x=0, y=1.18, orientation="h"),
         )
-        st.plotly_chart(fig5, use_container_width=True)
+        st.plotly_chart(fig5, width='stretch')
 
-        # MAD-сигналы по ТЗ
         fig5b = go.Figure()
         if "MAD_score_ЦБ" in df5.columns:
             fig5b.add_trace(go.Scatter(
@@ -723,10 +703,10 @@ with tab5:
             yaxis_title="Отклонение от нормы (σ)",
             height=260, legend=dict(x=0, y=1.18, orientation="h"),
         )
-        st.plotly_chart(fig5b, use_container_width=True)
+        st.plotly_chart(fig5b, width='stretch')
         st.caption("0 = норма · >0 дефицит (стресс) · <0 профицит (норма)")
 
-# ── Backtest ──────────────────────────────────────────────────────
+# Backtest
 with tab6:
     st.subheader("История LSI (2019 — сегодня)")
     st.caption("M5 доступен с 2019, поэтому backtest начинается с 2019.")
@@ -740,9 +720,9 @@ with tab6:
 
         fig_bt = go.Figure()
         for status, color, label in [
-            ("GREEN",  "#27ae60", "🟢 Норма (0–40)"),
-            ("YELLOW", "#f39c12", "🟡 Внимание (40–70)"),
-            ("RED",    "#e74c3c", "🔴 Стресс (70–100)"),
+            ("GREEN",  "#27ae60", "🟢 Норма (0-40)"),
+            ("YELLOW", "#f39c12", "🟡 Внимание (40-70)"),
+            ("RED",    "#e74c3c", "🔴 Стресс (70-100)"),
         ]:
             sub = bt_c[bt_c["status"] == status]
             fig_bt.add_trace(go.Scatter(
@@ -755,8 +735,8 @@ with tab6:
             line=dict(color="#e74c3c", width=2),
         ))
         for s, e, label in [
-            ("2022-02-01", "2022-05-01", "Фев–май 2022<br>Геополитический шок"),
-            ("2023-07-01", "2023-10-01", "Авг–окт 2023<br>Валютный стресс"),
+            ("2022-02-01", "2022-05-01", "Фев-май 2022<br>Геополитический шок"),
+            ("2023-07-01", "2023-10-01", "Авг-окт 2023<br>Валютный стресс"),
         ]:
             fig_bt.add_vrect(x0=s, x1=e, fillcolor="red", opacity=0.07,
                              annotation_text=label, annotation_position="top left",
@@ -771,25 +751,24 @@ with tab6:
             xaxis_title="Дата",
             height=440, legend=dict(x=0, y=1.12, orientation="h"),
         )
-        st.plotly_chart(fig_bt, use_container_width=True)
+        st.plotly_chart(fig_bt, width='stretch')
 
-        # Сравнение эпизодов
         norm = bt_c[~(bt_c["date"].between("2022-02-01", "2022-05-01") |
                       bt_c["date"].between("2023-07-01", "2023-10-01"))]
         rows = [{"Период": "Норма", "Медиана LSI": norm["LSI"].median(),
                  "Макс LSI": norm["LSI"].max(), "Дней": len(norm)}]
-        for s, e, lbl in [("2022-02-01", "2022-05-01", "Фев–май 2022"),
-                          ("2023-07-01", "2023-10-01", "Авг–окт 2023")]:
+        for s, e, lbl in [("2022-02-01", "2022-05-01", "Фев-май 2022"),
+                          ("2023-07-01", "2023-10-01", "Авг-окт 2023")]:
             sub = bt_c[bt_c["date"].between(s, e)]
             if len(sub):
                 rows.append({"Период": lbl, "Медиана LSI": sub["LSI"].median(),
                              "Макс LSI": sub["LSI"].max(), "Дней": len(sub)})
         st.dataframe(pd.DataFrame(rows).round(
-            1), use_container_width=True, hide_index=True)
+            1), width='stretch', hide_index=True)
 
         st.markdown("**Последние 20 дней:**")
         recent = bt_c[["date", "LSI", "status"]].tail(20).copy()
         recent["status"] = recent["status"].map(
             {"GREEN": "🟢 Норма", "YELLOW": "🟡 Внимание", "RED": "🔴 Стресс"})
         st.dataframe(recent.round(1).reset_index(drop=True),
-                     use_container_width=True, hide_index=True)
+                     width='stretch', hide_index=True)

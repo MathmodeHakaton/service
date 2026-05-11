@@ -1,3 +1,13 @@
+from __future__ import annotations
+import streamlit as st
+import sys
+from pathlib import Path
+from datetime import timedelta
+import pandas as pd
+import plotly.graph_objects as go
+from src.presentation.llm_commentary import (
+    build_prompt, generate_commentary, llm_available, LLM_MODEL,
+)
 """
 LSI · Liquidity Stress Index — финальная страница агрегационного слоя.
 
@@ -15,9 +25,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-import pandas as pd
-import plotly.graph_objects as go
-import streamlit as st
 
 st.set_page_config(page_title="LSI · Агрегация", page_icon="📊", layout="wide")
 
@@ -31,13 +38,12 @@ STATUS_RU = {"green": "🟢 НОРМА", "yellow": "🟡 ВНИМАНИЕ", "red
              "partial": "⚪ ЧАСТИЧНО"}
 
 
-# ══════════════════════════════════════════════════════════════════
 # ДАННЫЕ
-# ══════════════════════════════════════════════════════════════════
 
 @st.cache_data(ttl=600)
 def load_artifacts():
-    extract = pd.read_csv(ART / "lsi_dashboard_extract.csv", parse_dates=["date"])
+    extract = pd.read_csv(
+        ART / "lsi_dashboard_extract.csv", parse_dates=["date"])
     mod_imp = pd.read_csv(ART / "module_importance_catboost.csv")
     feat_imp = pd.read_csv(ART / "feature_importance.csv")
     backtest = pd.read_csv(ART / "backtest_crisis_episodes.csv")
@@ -64,9 +70,7 @@ except FileNotFoundError as e:
     st.stop()
 
 
-# ══════════════════════════════════════════════════════════════════
 # ШАПКА + REFRESH
-# ══════════════════════════════════════════════════════════════════
 
 c_h, c_btn1, c_btn2 = st.columns([4, 1, 1])
 with c_h:
@@ -124,15 +128,14 @@ lsi_raw = float(latest["lsi_raw"])
 status = str(latest["status"])
 
 
-# ══════════════════════════════════════════════════════════════════
 # ГЕЙДЖ + СТАТУС
-# ══════════════════════════════════════════════════════════════════
 col_g, col_s = st.columns([2, 1])
 with col_g:
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=lsi_val,
-        title={"text": f"LSI на {latest_date.isoformat()}", "font": {"size": 14}},
+        title={"text": f"LSI на {latest_date.isoformat()}", "font": {
+            "size": 14}},
         gauge={
             "axis": {"range": [0, 100],
                      "tickvals": [0, 40, 70, 100],
@@ -148,7 +151,8 @@ with col_g:
         number={"suffix": " / 100", "font": {"size": 32}},
     ))
     fig.update_layout(height=260, margin=dict(t=30, b=10, l=10, r=10))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
+
 with col_s:
     color = STATUS_COLOR.get(status, "#95a5a6")
     st.markdown(f"""
@@ -163,10 +167,7 @@ with col_s:
 
 st.divider()
 
-
-# ══════════════════════════════════════════════════════════════════
 # ВКЛАД МОДУЛЕЙ (SHAP)
-# ══════════════════════════════════════════════════════════════════
 st.subheader("Вклад модулей в текущий LSI (SHAP)")
 st.caption("SHAP-разложение прогноза CatBoost. "
            "Положительный вклад тянет вверх (к стрессу), отрицательный — вниз. "
@@ -185,17 +186,9 @@ fig_c = go.Figure(go.Bar(
 fig_c.add_vline(x=0, line_color="gray", line_dash="dot")
 fig_c.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=20),
                     xaxis_title="Вклад в LSI (пунктов)")
-st.plotly_chart(fig_c, use_container_width=True)
+st.plotly_chart(fig_c, width='stretch')
 
-with st.expander("📐 Глобальная важность модулей (mean |SHAP|)"):
-    st.dataframe(mod_imp.round(3), use_container_width=True, hide_index=True)
-with st.expander("🔬 Top-фичи по mean |SHAP|"):
-    st.dataframe(feat_imp.head(15).round(3), use_container_width=True, hide_index=True)
-
-
-# ══════════════════════════════════════════════════════════════════
-# ИСТОРИЯ LSI
-# ══════════════════════════════════════════════════════════════════
+# LSI TIMESERIES
 st.subheader("История LSI")
 ts = extract.dropna(subset=["lsi_smoothed"]).copy()
 ts["status"] = ts["status"].astype(str)
@@ -212,8 +205,8 @@ fig_ts.add_trace(go.Scatter(
     x=ts["date"], y=ts["lsi_smoothed"], mode="lines",
     line=dict(color="#2c3e50", width=1.2), showlegend=False,
 ))
-for s, e, lbl in [("2022-02-01", "2022-04-30", "Фев–апр 2022"),
-                  ("2023-08-01", "2023-09-30", "Авг–сен 2023")]:
+for s, e, lbl in [("2022-02-01", "2022-04-30", "Фев-апр 2022"),
+                  ("2023-08-01", "2023-09-30", "Авг-сен 2023")]:
     fig_ts.add_vrect(x0=s, x1=e, fillcolor="red", opacity=0.07,
                      annotation_text=lbl, annotation_position="top left",
                      annotation_font_size=10)
@@ -227,9 +220,7 @@ with st.expander("🧪 Backtest на стресс-эпизодах ТЗ"):
     st.dataframe(backtest, use_container_width=True, hide_index=True)
 
 
-# ══════════════════════════════════════════════════════════════════
 # YANDEX LLM КОММЕНТАРИЙ
-# ══════════════════════════════════════════════════════════════════
 st.divider()
 st.subheader("🤖 Комментарий аналитика (Yandex AI Studio)")
 
