@@ -1,3 +1,13 @@
+from __future__ import annotations
+import streamlit as st
+import sys
+from pathlib import Path
+from datetime import timedelta
+import pandas as pd
+import plotly.graph_objects as go
+from src.presentation.llm_commentary import (
+    build_prompt, generate_commentary, llm_available, LLM_MODEL,
+)
 """
 LSI · Liquidity Stress Index — финальный агрегационный слой.
 
@@ -9,17 +19,9 @@ module_importance_catboost / feature_importance / backtest_crisis_episodes).
 LLM-комментарий: квантованный Qwen через Ollama
 (модель qwen2.5:3b-instruct по умолчанию, переопределяется в settings).
 """
-from __future__ import annotations
-
-import sys
-from pathlib import Path
-from datetime import datetime, timedelta
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-import pandas as pd
-import plotly.graph_objects as go
-import streamlit as st
 
 st.set_page_config(page_title="LSI · Агрегация", page_icon="📊", layout="wide")
 
@@ -39,13 +41,11 @@ STATUS_RU = {"green": "🟢 НОРМА", "yellow": "🟡 ВНИМАНИЕ",
              "red": "🔴 СТРЕСС", "partial": "⚪ ЧАСТИЧНО"}
 
 
-# ══════════════════════════════════════════════════════════════════
 # ДАННЫЕ
-# ══════════════════════════════════════════════════════════════════
-
 @st.cache_data(ttl=3600)
 def load_artifacts():
-    extract = pd.read_csv(ART / "lsi_dashboard_extract.csv", parse_dates=["date"])
+    extract = pd.read_csv(
+        ART / "lsi_dashboard_extract.csv", parse_dates=["date"])
     mod_imp = pd.read_csv(ART / "module_importance_catboost.csv")
     feat_imp = pd.read_csv(ART / "feature_importance.csv")
     backtest = pd.read_csv(ART / "backtest_crisis_episodes.csv")
@@ -77,22 +77,20 @@ except FileNotFoundError as e:
     st.stop()
 
 
-# ══════════════════════════════════════════════════════════════════
 # ШАПКА
-# ══════════════════════════════════════════════════════════════════
 
 st.title("LSI — Liquidity Stress Index")
 st.caption("Агрегационный слой CatBoost · SHAP-интерпретация вклада модулей · "
            "Источники: ЦБ РФ, Минфин, Росказна, ФНС")
 
-# Свежий день: последний валидный (full_model_valid=1), иначе просто последний.
 valid = extract[extract["full_model_valid"] == 1]
 latest = (valid.iloc[-1] if not valid.empty else extract.iloc[-1])
 latest_date = pd.to_datetime(latest["date"]).date()
 
 contributions = {m: float(latest.get(f"contribution_{m}", 0.0) or 0.0)
                  for m in ["M1", "M2", "M3", "M4", "M5"]}
-lsi_val = float(latest.get("lsi") if pd.notna(latest.get("lsi")) else latest["lsi_smoothed"])
+lsi_val = float(latest.get("lsi") if pd.notna(
+    latest.get("lsi")) else latest["lsi_smoothed"])
 lsi_raw = float(latest["lsi_raw"])
 status = str(latest["status"])
 
@@ -101,7 +99,8 @@ with col_g:
     fig = go.Figure(go.Indicator(
         mode="gauge+number",
         value=lsi_val,
-        title={"text": f"LSI на {latest_date.isoformat()}", "font": {"size": 14}},
+        title={"text": f"LSI на {latest_date.isoformat()}", "font": {
+            "size": 14}},
         gauge={
             "axis": {"range": [0, 100],
                      "tickvals": [0, 40, 70, 100],
@@ -133,10 +132,7 @@ with col_s:
 
 st.divider()
 
-
-# ══════════════════════════════════════════════════════════════════
 # ВКЛАД МОДУЛЕЙ (SHAP)
-# ══════════════════════════════════════════════════════════════════
 st.subheader("Вклад модулей в текущий LSI (SHAP)")
 st.caption("SHAP-разложение прогноза CatBoost: сумма вкладов + baseline = LSI. "
            "Положительный вклад тянет вверх (к стрессу), отрицательный — вниз.")
@@ -145,7 +141,8 @@ contrib_df = pd.DataFrame({
     "module": [MODULE_LABELS[m] for m in ["M1", "M2", "M3", "M4", "M5"]],
     "contribution": [contributions[m] for m in ["M1", "M2", "M3", "M4", "M5"]],
 })
-contrib_df = contrib_df.sort_values("contribution", key=lambda s: s.abs(), ascending=False)
+contrib_df = contrib_df.sort_values(
+    "contribution", key=lambda s: s.abs(), ascending=False)
 colors = ["#e74c3c" if v > 0 else "#27ae60" for v in contrib_df["contribution"]]
 
 fig_c = go.Figure(go.Bar(
@@ -162,12 +159,11 @@ with st.expander("📐 Глобальная важность модулей (mea
     st.dataframe(mod_imp.round(3), use_container_width=True, hide_index=True)
 
 with st.expander("🔬 Top-фичи по mean |SHAP|"):
-    st.dataframe(feat_imp.head(15).round(3), use_container_width=True, hide_index=True)
+    st.dataframe(feat_imp.head(15).round(
+        3), use_container_width=True, hide_index=True)
 
 
-# ══════════════════════════════════════════════════════════════════
 # LSI TIMESERIES
-# ══════════════════════════════════════════════════════════════════
 st.subheader("История LSI")
 
 ts = extract.dropna(subset=["lsi_smoothed"]).copy()
@@ -187,8 +183,8 @@ fig_ts.add_trace(go.Scatter(
     name="LSI (Kalman)", line=dict(color="#2c3e50", width=1.2),
     showlegend=False,
 ))
-for s, e, lbl in [("2022-02-01", "2022-04-30", "Фев–апр 2022"),
-                  ("2023-08-01", "2023-09-30", "Авг–сен 2023")]:
+for s, e, lbl in [("2022-02-01", "2022-04-30", "Фев-апр 2022"),
+                  ("2023-08-01", "2023-09-30", "Авг-сен 2023")]:
     fig_ts.add_vrect(x0=s, x1=e, fillcolor="red", opacity=0.07,
                      annotation_text=lbl, annotation_position="top left",
                      annotation_font_size=10)
@@ -200,18 +196,14 @@ st.plotly_chart(fig_ts, use_container_width=True)
 
 with st.expander("🧪 Backtest на стресс-эпизодах ТЗ"):
     st.dataframe(backtest, use_container_width=True, hide_index=True)
-    st.caption("verdict=OK_red_reached — эпизод корректно отмечен красной зоной (>=70).")
+    st.caption(
+        "verdict=OK_red_reached — эпизод корректно отмечен красной зоной (>=70).")
 
 
-# ══════════════════════════════════════════════════════════════════
 # LLM КОММЕНТАРИЙ
-# ══════════════════════════════════════════════════════════════════
 st.divider()
 st.subheader("🤖 Комментарий LLM-аналитика")
 
-from src.presentation.llm_commentary import (
-    build_prompt, generate_commentary, llm_available, LLM_MODEL,
-)
 
 tax_df = load_tax_calendar()
 if not tax_df.empty and "date" in tax_df.columns:
@@ -247,7 +239,8 @@ if not ts_full_row.empty:
     for col, label in flag_cols.items():
         if col in src_row.index and float(src_row.get(col, 0) or 0) >= 1:
             active_flags.append(label)
-active_flags_str = ", ".join(active_flags) if active_flags else "нет активных флагов"
+active_flags_str = ", ".join(
+    active_flags) if active_flags else "нет активных флагов"
 
 prompt = build_prompt(
     lsi_value=lsi_val,

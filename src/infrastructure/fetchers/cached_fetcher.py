@@ -111,7 +111,6 @@ class CachedFetcher:
             )
             return [{"__key__": "__single__", "__records__": records}]
 
-        # dict[str, DataFrame] — сериализуем каждый
         result = []
         for key, df in data.items():
             if isinstance(df, pd.DataFrame) and not df.empty:
@@ -130,12 +129,10 @@ class CachedFetcher:
         if not payload:
             return pd.DataFrame()
 
-        # Один DataFrame
         if len(payload) == 1 and payload[0].get("__key__") == "__single__":
             df = pd.DataFrame(payload[0]["__records__"])
             return CachedFetcher._restore_dates(df)
 
-        # dict[str, DataFrame]
         result = {}
         for item in payload:
             key = item["__key__"]

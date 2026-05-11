@@ -23,11 +23,9 @@ def show():
         runner = BacktestRunner(start_year=start_year, end_year=end_year)
         results = runner.run()
 
-        # Показать результаты
         values = [r.value for r in results]
         st.line_chart(values)
 
-        # Метрики
         metrics = runner.get_metrics(results)
 
         col1, col2, col3, col4 = st.columns(4)

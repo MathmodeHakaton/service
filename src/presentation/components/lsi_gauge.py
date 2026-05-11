@@ -10,7 +10,6 @@ def render_lsi_gauge(result):
 
     value = result.value
 
-    # Определить цвет
     if value >= 0.7:
         color = "🔴 Красная зона"
     elif value >= 0.4:

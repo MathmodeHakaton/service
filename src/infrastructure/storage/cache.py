@@ -25,7 +25,6 @@ class ParquetCache:
         if not cache_file.exists():
             return None
 
-        # Проверить TTL
         file_age = datetime.now() - datetime.fromtimestamp(cache_file.stat().st_mtime)
         if file_age > self.ttl:
             cache_file.unlink()

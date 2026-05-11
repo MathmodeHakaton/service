@@ -1,4 +1,3 @@
-# application/pipeline.py
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -45,7 +44,6 @@ class Pipeline:
         self.session = session
         self.force_refresh = force_refresh
 
-        # Оборачиваем каждый фетчер в CachedFetcher
         self._cbr = CachedFetcher(
             fetcher=CBRFetcher(),
             source_key="cbr_main",
@@ -97,13 +95,11 @@ class Pipeline:
     def _fetch_all(self) -> dict:
         data = {}
 
-        # CBR — может вернуть несколько DataFrame внутри data{}
         cbr = self._cbr.fetch()
         if cbr.status in ("success", "cached", "stale") and cbr.data is not None:
             if isinstance(cbr.data, dict):
                 data.update(cbr.data)
             else:
-                # CachedFetcher вернул DataFrame напрямую
                 data["cbr"] = cbr.data
             logger.info("CBR: статус=%s", cbr.status)
 
@@ -126,7 +122,6 @@ class Pipeline:
             data["target_date"] = datetime.now()
             logger.info("FNS: статус=%s", fns.status)
 
-        # Росказна — только если bliquidity ещё не пришёл из CBR
         if "bliquidity" not in data or data["bliquidity"] is None:
             rk = self._roskazna.fetch()
             if rk.data is not None:
@@ -136,7 +131,6 @@ class Pipeline:
                     data["bliquidity"] = rk.data
             logger.info("Росказна: статус=%s", rk.status)
 
-        # Логируем что получили
         for key, val in data.items():
             if isinstance(val, pd.DataFrame):
                 logger.info("data['%s']: %d строк", key, len(val))

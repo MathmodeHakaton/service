@@ -22,7 +22,7 @@ if df3 is None or df3.empty or "cover_ratio" not in df3.columns:
     st.info("Нет данных ОФЗ — нужны результаты аукционов Минфина")
     st.stop()
 
-# ── Выбор периода ─────────────────────────────────────────────────────────
+# Выбор периода
 st.markdown("### Выберите период")
 col_btns = st.columns(5)
 presets = {"6 месяцев": 180, "1 год": 365,
@@ -54,7 +54,7 @@ auctions3 = df3[
     (df3["date"] >= pd.Timestamp(d_from)) & (df3["date"] <= pd.Timestamp(d_to))
 ].dropna(subset=["cover_ratio"]).copy().reset_index(drop=True)
 
-# ── График ────────────────────────────────────────────────────────────────
+# График
 if len(auctions3):
     auctions3["rank"] = auctions3.groupby("date").cumcount()
     auctions3["n_per_day"] = auctions3.groupby(

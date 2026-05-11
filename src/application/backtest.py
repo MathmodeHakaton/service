@@ -19,8 +19,6 @@ class BacktestRunner:
         results = []
 
         for year in range(self.start_year, self.end_year + 1):
-            # TODO: реализовать загрузку исторических данных
-            # и вычисление LSI для каждого года
 
             result = LSIResult(
                 value=0.5,
@@ -40,8 +38,6 @@ class BacktestRunner:
             return {}
 
         values = [r.value for r in results]
-
-        # TODO: реализовать вычисление Sharpe ratio, max drawdown, etc.
 
         metrics = {
             "sharpe_ratio": 1.5,
