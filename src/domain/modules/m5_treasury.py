@@ -115,5 +115,4 @@ class M5Treasury(BaseModule):
         # Flag_Proficit — баланс < -500 млрд (банки размещают в ЦБ, профицит)
         df["Flag_Proficit"] = (df["balance"] < -500).astype(int)
 
-        df.drop(columns=["_week"], inplace=True)
         return df
