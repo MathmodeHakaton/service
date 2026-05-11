@@ -340,8 +340,8 @@ class CBRFetcher(BaseFetcher):
             for tr in table.find_all("tr"):
                 cells = [td.get_text(strip=True) for td in tr.find_all("td")]
 
-            if len(cells) >= 15 and cells[0] not in ("1", "Дата", ""):
-                records.append(cells[:15])
+                if len(cells) >= 15 and cells[0] not in ("1", "Дата", ""):
+                    records.append(cells[:15])
 
             df = pd.DataFrame(records, columns=COLS)
             df["date"] = pd.to_datetime(
