@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+from streamlit.config_util import _clean
 
 from .base import BaseFetcher, FetcherResult
 
@@ -203,10 +204,16 @@ class CBRFetcher(BaseFetcher):
             raise
 
     # ── М2: Репо ──────────────────────────────────────────────────────────
-    def fetch_repo(self, date_from: str = "01.01.2010") -> pd.DataFrame:
-        """Скачивает итоги аукционов репо."""
+    def fetch_repo(self, date_from: str = "21.11.2002") -> pd.DataFrame:
+        """Скачивает итоги аукционов репо (все сроки, с 2002)."""
         cache = self.cache_dir / "repo_results.csv"
-        df = _get_html_table(REPO_URL, _date_range_params(date_from))
+        params = {
+            "UniDbQuery.Posted": "True",
+            "UniDbQuery.From":   date_from,
+            "UniDbQuery.To":     datetime.now().strftime("%d.%m.%Y"),
+            "UniDbQuery.P1":     "0",
+        }
+        df = _get_html_table(REPO_URL, params)
         if df is not None:
             df.columns = ["type", "term_days", "date", "time",
                           "volume_mln", "rate_wavg", "settlement"]
@@ -274,10 +281,41 @@ class CBRFetcher(BaseFetcher):
             return pd.read_csv(cache, parse_dates=["date"])
         raise RuntimeError("Нет данных ключевой ставки")
 
-    # ── М5: Баланс ликвидности ────────────────────────────────────────────
-    def fetch_bliquidity(self, date_from: str = "01.01.2019") -> pd.DataFrame:
-        """Скачивает структурный баланс ликвидности банковского сектора."""
+    # ── М5: Баланс ликвидности (все 15 колонок по ТЗ) ────────────────────
+    def fetch_bliquidity(self, date_from: str = "01.02.2014") -> pd.DataFrame:
+        """
+        Скачивает таблицу дефицита/профицита ликвидности со всеми колонками по ТЗ:
+          col2  structural_balance_bln        — дефицит/профицит ⭐⭐ ground truth
+          col5  auction_repo_bln              — аукционное репо ⭐ M2
+          col8  standing_secured_credit_bln   — экстренное кредитование ⭐ M2 стресс
+          col14 corr_accounts_bln             — корсчета ⭐⭐ M1 факт, M5
+          col15 required_reserves_bln         — норматив резервов ⭐⭐ M1
+        """
         cache = self.cache_dir / "bliquidity.csv"
+        COLS = [
+            "date",
+            "structural_balance_bln",
+            "balance_ex_budget_bln",
+            "loans_total_bln",
+            "auction_repo_bln",
+            "auction_secured_credit_bln",
+            "standing_repo_bln",
+            "standing_secured_credit_bln",
+            "deposits_total_bln",
+            "auction_deposits_bln",
+            "standing_deposits_bln",
+            "cobr_bln",
+            "other_ops_bln",
+            "corr_accounts_bln",
+            "required_reserves_bln",
+        ]
+
+        def _clean(s):
+            return pd.to_numeric(
+                str(s).replace("\xa0", "").replace(" ", "").replace(",", "."),
+                errors="coerce"
+            )
+
         try:
             import ssl
             import urllib.request
@@ -297,22 +335,23 @@ class CBRFetcher(BaseFetcher):
             table = soup.find("table")
             if not table:
                 raise ValueError("Таблица bliquidity не найдена")
-            rows = []
-            for tr in table.find_all("tr")[1:]:
+
+            records = []
+            for tr in table.find_all("tr"):
                 cells = [td.get_text(strip=True) for td in tr.find_all("td")]
-                if len(cells) >= 2:
-                    rows.append(
-                        {"date": cells[0], "structural_balance_bln": cells[1]})
-            df = pd.DataFrame(rows)
+
+            if len(cells) >= 15 and cells[0] not in ("1", "Дата", ""):
+                records.append(cells[:15])
+
+            df = pd.DataFrame(records, columns=COLS)
             df["date"] = pd.to_datetime(
                 df["date"], format="%d.%m.%Y", errors="coerce")
-            df["structural_balance_bln"] = pd.to_numeric(
-                df["structural_balance_bln"].str.replace(
-                    r"[\s\xa0]", "", regex=True).str.replace(",", "."),
-                errors="coerce"
-            )
-            df = df.dropna().sort_values("date").reset_index(drop=True)
+            for col in COLS[1:]:
+                df[col] = df[col].apply(_clean)
+            df = df.dropna(subset=["date"]).sort_values(
+                "date").reset_index(drop=True)
             df.to_csv(cache, index=False)
+            logger.info("bliquidity: %d строк", len(df))
             return df
         except Exception as e:
             logger.warning("bliquidity: %s, беру кэш", e)

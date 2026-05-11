@@ -325,7 +325,7 @@ st.caption(
 col_lsi, col_sf, col_status = st.columns([2, 1, 1])
 
 with col_lsi:
-    st.plotly_chart(gauge_fig(lsi["lsi"]), use_container_width=True)
+    st.metric("LSI", f"{lsi['lsi']:.1f} / 100")
 
 with col_sf:
     sf = lsi["seasonal_factor"]

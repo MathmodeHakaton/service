@@ -27,7 +27,7 @@ def load_all():
         result = p.execute_full()
         data = result.raw_data
 
-    # Fallback OFZ из кэша
+        # Fallback OFZ из кэша
         if not data.get("ofz") is not None and not data.get("ofz", pd.DataFrame()).empty:
             import json
             import os
@@ -58,9 +58,17 @@ def load_all():
         df1 = m1._calculate(data.get("reserves", pd.DataFrame()),
                             data.get("ruonia",   pd.DataFrame()),
                             data.get("keyrate",  pd.DataFrame()))
-        df2 = m2._calculate(data.get("repo",        pd.DataFrame()),
-                            data.get("keyrate",     pd.DataFrame()),
-                            data.get("repo_params", pd.DataFrame()))
+
+        # feature/merge: поддержка repo_full
+        repo_full = data.get("repo_full", pd.DataFrame())
+        if repo_full is not None and not repo_full.empty:
+            df2 = m2._calculate_full(
+                repo_full, data.get("keyrate", pd.DataFrame()))
+        else:
+            df2 = m2._calculate(data.get("repo",        pd.DataFrame()),
+                                data.get("keyrate",     pd.DataFrame()),
+                                data.get("repo_params", pd.DataFrame()))
+
         ofz_raw = data.get("ofz", pd.DataFrame())
         df3 = m3._calculate(
             ofz_raw) if ofz_raw is not None and not ofz_raw.empty and "date" in ofz_raw.columns else pd.DataFrame()
@@ -102,7 +110,7 @@ def load_all():
         lsi = {
             "lsi":           round(lsi_result.value * 100, 1),
             "status":        {"normal": "GREEN", "warning": "YELLOW", "critical": "RED"}.get(lsi_result.status, "GREEN"),
-            "contributions": {k: round(v*100, 2) for k, v in lsi_result.contributions.items()},
+            "contributions": {k: round(v * 100, 2) for k, v in lsi_result.contributions.items()},
             "scores":        scores,
             "seasonal_factor": sf,
             "computed_at":   pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
