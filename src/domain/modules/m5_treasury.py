@@ -107,4 +107,13 @@ class M5Treasury(BaseModule):
                       on="_week", how="left")
         df["Flag_Budget_Drain"] = df["date"].isin(drain_dates).astype(int)
         df.drop(columns=["_week"], inplace=True)
+        # MAD_score_депозиты — proxy через отрицательный баланс (профицит банков)
+        deposits_proxy = df["balance"].clip(upper=0).abs()
+        df["MAD_score_депозиты"] = mad_normalize(
+            deposits_proxy, window=MAD_WINDOW)
+
+        # Flag_Proficit — баланс < -500 млрд (банки размещают в ЦБ, профицит)
+        df["Flag_Proficit"] = (df["balance"] < -500).astype(int)
+
+        df.drop(columns=["_week"], inplace=True)
         return df

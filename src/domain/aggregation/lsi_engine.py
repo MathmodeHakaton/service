@@ -28,6 +28,15 @@ WEIGHTS = {
 }
 
 
+def _safe_int(val, default: int = 0) -> int:
+    try:
+        if pd.isna(val):
+            return default
+        return int(val or default)
+    except (TypeError, ValueError):
+        return default
+
+
 def _sigmoid(x: float) -> float:
     return 1.0 / (1.0 + np.exp(-float(x)))
 
@@ -111,9 +120,8 @@ class LSIEngine:
         """MAD_score_RUONIA × 0.60 + MAD_score_спред × 0.40 + бонус флагов."""
         mad_ru = float(r.get("MAD_score_RUONIA", 0) or 0)
         mad_sp = float(r.get("MAD_score_спред",  0) or 0)
-        flag_ak = int(r.get("Flag_AboveKey", 0) or 0) if pd.notna(
-            r.get("Flag_AboveKey", 0)) else 0
-        flag_ep = int(r.get("Flag_EndOfPeriod", 0) or 0)
+        flag_ak = _safe_int(r.get("Flag_AboveKey",    0))
+        flag_ep = _safe_int(r.get("Flag_EndOfPeriod", 0))
         s = _sigmoid(0.60 * mad_ru + 0.40 * mad_sp)
         if flag_ak:
             s = min(s + 0.08, 1.0)

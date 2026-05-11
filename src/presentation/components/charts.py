@@ -14,7 +14,7 @@ def render_spread_chart(data):
     fig.update_layout(title="Спред актива",
                       xaxis_title="Время", yaxis_title="bp")
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def render_cover_chart(data):
@@ -25,4 +25,4 @@ def render_cover_chart(data):
     fig.update_layout(title="Покрытие приказов",
                       xaxis_title="Время", yaxis_title="Об./мин.")
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
