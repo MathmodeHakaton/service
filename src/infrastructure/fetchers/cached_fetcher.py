@@ -147,5 +147,8 @@ class CachedFetcher:
     def _restore_dates(df: pd.DataFrame) -> pd.DataFrame:
         for col in df.columns:
             if "date" in col.lower() or col.endswith("_at"):
-                df[col] = pd.to_datetime(df[col], errors="ignore")
+                try:
+                    df[col] = pd.to_datetime(df[col], errors="coerce")
+                except Exception:
+                    pass
         return df
