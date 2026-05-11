@@ -1,0 +1,15 @@
+feature,module,mean_abs_shap
+m3_nedospros_flag,M3,20.11508305441621
+m1_ruonia_spread_z,M1,2.0142573065886693
+m1_end_of_period_flag,M1,1.3811662885273168
+m2_repo_utilization_z,M2,1.3221913130283136
+m2_repo_volume_z,M2,1.254793487297796
+m3_avg_yield_z,M3,0.9775173965564172
+m1_reserve_spread_z_obs,M1,0.49623044909353015
+m3_perespros_flag,M3,0.465719711048597
+m5_federal_drain_z_obs,M5,0.4407929521123058
+m5_structural_drain_z,M5,0.4083626116693546
+m3_bid_cover_z,M3,0.3530416780634218
+m2_repo_high_utilization_flag,M2,0.2750112020786436
+m2_repo_rate_spread_z,M2,0.23329000302120664
+m5_budget_drain_flag,M5,0.12156120778127077
