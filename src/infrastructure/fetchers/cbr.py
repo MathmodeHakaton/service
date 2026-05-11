@@ -16,7 +16,6 @@ import numpy as np
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-from streamlit.config_util import _clean
 
 from .base import BaseFetcher, FetcherResult
 
@@ -281,33 +280,17 @@ class CBRFetcher(BaseFetcher):
             return pd.read_csv(cache, parse_dates=["date"])
         raise RuntimeError("Нет данных ключевой ставки")
 
-    # ── М5: Баланс ликвидности (все 15 колонок по ТЗ) ────────────────────
+    # ── М5: Баланс ликвидности ────────────────────────────────────────────
     def fetch_bliquidity(self, date_from: str = "01.02.2014") -> pd.DataFrame:
-        """
-        Скачивает таблицу дефицита/профицита ликвидности со всеми колонками по ТЗ:
-          col2  structural_balance_bln        — дефицит/профицит ⭐⭐ ground truth
-          col5  auction_repo_bln              — аукционное репо ⭐ M2
-          col8  standing_secured_credit_bln   — экстренное кредитование ⭐ M2 стресс
-          col14 corr_accounts_bln             — корсчета ⭐⭐ M1 факт, M5
-          col15 required_reserves_bln         — норматив резервов ⭐⭐ M1
-        """
         cache = self.cache_dir / "bliquidity.csv"
-        COLS = [
+
+        COLS_NEEDED = [
             "date",
-            "structural_balance_bln",
-            "balance_ex_budget_bln",
-            "loans_total_bln",
-            "auction_repo_bln",
-            "auction_secured_credit_bln",
-            "standing_repo_bln",
-            "standing_secured_credit_bln",
-            "deposits_total_bln",
-            "auction_deposits_bln",
-            "standing_deposits_bln",
-            "cobr_bln",
-            "other_ops_bln",
-            "corr_accounts_bln",
-            "required_reserves_bln",
+            "structural_balance_bln",       # col2  — M5 ground truth
+            "auction_repo_bln",             # col5  — M2
+            "standing_secured_credit_bln",  # col8  — M2 стресс
+            "corr_accounts_bln",            # col14 — M1
+            "required_reserves_bln",        # col15 — M1
         ]
 
         def _clean(s):
@@ -331,6 +314,7 @@ class CBRFetcher(BaseFetcher):
             url = f"{BLIQ_URL}?{params}"
             with urllib.request.urlopen(url, context=ctx, timeout=self.timeout) as resp:
                 html = resp.read().decode("utf-8")
+
             soup = BeautifulSoup(html, "html.parser")
             table = soup.find("table")
             if not table:
@@ -339,20 +323,41 @@ class CBRFetcher(BaseFetcher):
             records = []
             for tr in table.find_all("tr"):
                 cells = [td.get_text(strip=True) for td in tr.find_all("td")]
+                if not cells:
+                    continue
+                first = cells[0].strip()
+                # Пропускаем заголовки и строки с формулами
+                if not first or first in ("1", "Дата", "") or "=" in first:
+                    continue
+                # Фильтруем по дате в первой ячейке
+                try:
+                    pd.to_datetime(first, format="%d.%m.%Y")
+                except Exception:
+                    continue
+                # Дополняем до 15 ячеек если не хватает
+                while len(cells) < 15:
+                    cells.append("")
+                records.append({
+                    "date":                        cells[0],
+                    "structural_balance_bln":      cells[1],
+                    "auction_repo_bln":            cells[4],
+                    "standing_secured_credit_bln": cells[7],
+                    "corr_accounts_bln":           cells[13],
+                    "required_reserves_bln":       cells[14],
+                })
 
-                if len(cells) >= 15 and cells[0] not in ("1", "Дата", ""):
-                    records.append(cells[:15])
-
-            df = pd.DataFrame(records, columns=COLS)
+            df = pd.DataFrame(records, columns=COLS_NEEDED)
             df["date"] = pd.to_datetime(
                 df["date"], format="%d.%m.%Y", errors="coerce")
-            for col in COLS[1:]:
+            for col in COLS_NEEDED[1:]:
                 df[col] = df[col].apply(_clean)
             df = df.dropna(subset=["date"]).sort_values(
                 "date").reset_index(drop=True)
             df.to_csv(cache, index=False)
-            logger.info("bliquidity: %d строк", len(df))
+            logger.info("bliquidity: %d строк, %d колонок",
+                        len(df), len(df.columns))
             return df
+
         except Exception as e:
             logger.warning("bliquidity: %s, беру кэш", e)
             if cache.exists():
