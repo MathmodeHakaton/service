@@ -13,12 +13,12 @@ from typing import Dict, Any
 import numpy as np
 import pandas as pd
 
-from .base import BaseModule
-from ..normalization.mad import mad_normalize
+from src.domain.modules.base import BaseModule
+from src.domain.normalization.mad import mad_normalize
 
 PRIMARY_TERM = 7
 MAD_WINDOW = 30
-FLAG_COVER_THRESHOLD = 2.0   # ТЗ: cover > 2.0
+FLAG_COVER_THRESHOLD = 2.0
 
 TZ_COLUMNS = ["date", "MAD_score_cover",
               "MAD_score_rate_spread", "Flag_Demand"]
@@ -34,7 +34,6 @@ class M2Repo(BaseModule):
         if keyrate_df.empty:
             return pd.DataFrame(columns=TZ_COLUMNS)
 
-        # Приоритет: полные данные с cover_ratio из repo_full
         repo_full = data.get("repo_full", pd.DataFrame())
         if repo_full is not None and not repo_full.empty:
             df = self._calculate_full(repo_full, keyrate_df)
@@ -48,7 +47,6 @@ class M2Repo(BaseModule):
         if df.empty:
             return pd.DataFrame(columns=TZ_COLUMNS)
 
-        # Дополняем сигналами из bliquidity col5 и col8
         bliq = data.get("bliquidity", pd.DataFrame())
         if bliq is not None and not bliq.empty:
             df = self._merge_bliquidity_signals(df, bliq)
@@ -57,8 +55,6 @@ class M2Repo(BaseModule):
                  "MAD_score_emergency", "Flag_Emergency"]
         out_cols = [c for c in TZ_COLUMNS + extra if c in df.columns]
         return df[out_cols].copy()
-
-    # ── repo_full: полные данные со спросом и cover_ratio ──────────────────
 
     def _calculate_full(self, repo_full: pd.DataFrame, keyrate_df: pd.DataFrame) -> pd.DataFrame:
         df = repo_full[repo_full["term_days"] == PRIMARY_TERM].copy()
@@ -74,15 +70,12 @@ class M2Repo(BaseModule):
         df["MAD_score_cover"] = mad_normalize(
             df["cover_ratio"],  window=MAD_WINDOW)
 
-        # Flag_Demand по ТЗ: cover_ratio > 2.0 (спрос вдвое превысил размещение)
         row_num = df["MAD_score_rate_spread"].notna().cumsum()
         df["Flag_Demand"] = (
             (df["cover_ratio"] > FLAG_COVER_THRESHOLD) &
             (row_num >= MAD_WINDOW // 2)
         ).astype(int)
         return df
-
-    # ── bliquidity col5 / col8 ─────────────────────────────────────────────
 
     def _merge_bliquidity_signals(self, df: pd.DataFrame, bliq: pd.DataFrame) -> pd.DataFrame:
         """
@@ -100,19 +93,16 @@ class M2Repo(BaseModule):
         b = bliq[avail].copy()
         b["date"] = pd.to_datetime(b["date"])
 
-        # col5: MAD объёма аукционного репо
         if "auction_repo_bln" in b.columns:
             b["MAD_score_auction_repo"] = mad_normalize(
                 b["auction_repo_bln"], window=MAD_WINDOW)
 
-        # col7 + col8: суммарное экстренное заимствование
         emergency_cols = [c for c in ["standing_repo_bln",
                                       "standing_secured_credit_bln"] if c in b.columns]
         if emergency_cols:
             b["total_emergency_bln"] = b[emergency_cols].fillna(0).sum(axis=1)
             b["MAD_score_emergency"] = mad_normalize(
                 b["total_emergency_bln"], window=MAD_WINDOW)
-            # Flag_Emergency: любое появление экстренного кредита > 0 = стресс
             b["Flag_Emergency"] = (b["total_emergency_bln"] > 0).astype(int)
 
         df["date"] = pd.to_datetime(df["date"])
@@ -120,8 +110,6 @@ class M2Repo(BaseModule):
                            b.sort_values("date"),
                            on="date", direction="nearest", tolerance=pd.Timedelta("7d"))
         return df
-
-    # ── fallback: старые данные без спроса ─────────────────────────────────
 
     def _calculate(self, repo_df, keyrate_df, params_df) -> pd.DataFrame:
         df = repo_df[repo_df["term_days"] == PRIMARY_TERM].copy()

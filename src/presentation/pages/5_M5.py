@@ -25,7 +25,7 @@ if df5.empty or "balance" not in df5.columns:
     st.info("Нет данных")
     st.stop()
 
-# ── Выбор периода ─────────────────────────────────────────────────────────
+# Выбор периода
 st.markdown("### Выберите период")
 col_btns = st.columns(5)
 presets = {"6 месяцев": 180, "1 год": 365,
@@ -56,7 +56,6 @@ with col_d2:
 df5 = df5[(df5["date"] >= pd.Timestamp(d_from)) &
           (df5["date"] <= pd.Timestamp(d_to))].copy()
 
-# Инвертируем знак: профицит сверху (+), дефицит снизу (−)
 df5["balance_inv"] = -df5["balance"]
 bal_last = df5["balance_inv"].iloc[-1]
 

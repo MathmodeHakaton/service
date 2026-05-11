@@ -21,7 +21,7 @@ if df1.empty or "spread" not in df1.columns:
     st.info("Нет данных")
     st.stop()
 
-# ── Выбор периода ─────────────────────────────────────────────────────────
+# Выбор периода
 st.markdown("### Выберите период")
 col_btns = st.columns(5)
 presets = {"6 месяцев": 180, "1 год": 365,
@@ -52,7 +52,7 @@ with col_d2:
 df1_f = df1[(df1["date"] >= pd.Timestamp(d_from)) &
             (df1["date"] <= pd.Timestamp(d_to))].copy()
 
-# ── График ────────────────────────────────────────────────────────────────
+# График
 fig1 = go.Figure()
 fig1.add_trace(go.Bar(
     x=df1_f["date"], y=df1_f["spread"].fillna(0),

@@ -64,7 +64,6 @@ class MADNormalizer:
 
     def __init__(self, window_years: int = 3):
         self.window_years = window_years
-        # Используем дни по умолчанию; для месячных данных переопределить вручную
         self.window_size = window_years * 252
 
     def compute_series(self, series: pd.Series, window: Optional[int] = None) -> pd.Series:

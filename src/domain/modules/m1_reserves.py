@@ -66,8 +66,6 @@ class M1Reserves(BaseModule):
                     if c in df.columns]
         return df[out_cols].copy()
 
-    # ── конвертация bliquidity col14/15 в формат reserves ─────────────────
-
     @staticmethod
     def _bliq_to_reserves(bliq_df: pd.DataFrame) -> pd.DataFrame:
         """col14=corr_accounts, col15=required_reserves → actual_avg / required_avg."""
@@ -80,8 +78,6 @@ class M1Reserves(BaseModule):
         df["date"] = pd.to_datetime(df["date"])
         return df.dropna(subset=["actual_avg", "required_avg"]).sort_values("date").reset_index(drop=True)
 
-    # ── внутренние вычисления ───────────────────────────────────────────────
-
     def _calculate(self, reserves_df, ruonia_df, keyrate_df) -> pd.DataFrame:
         df = reserves_df.copy().sort_values("date").reset_index(drop=True)
         df["date"] = pd.to_datetime(df["date"])
@@ -93,16 +89,13 @@ class M1Reserves(BaseModule):
         else:
             df["spread"] = df["rel_spread"] = np.nan
 
-        # Определяем гранулярность данных: дневные (bliquidity) или месячные (Excel)
         is_daily = len(df) > 100 and df["date"].diff().dt.days.median() < 5
 
         ru = ruonia_df.set_index("date")["ruonia"].sort_index()
         ru.index = pd.DatetimeIndex(ru.index)
 
-        # MAD_score_RUONIA — всегда на дневных данных RUONIA
         mad_ruonia_daily = mad_normalize(ru, window=MAD_WINDOW_DAILY)
 
-        # Flag_AboveKey — дневной
         flag_above = pd.Series(0, index=ru.index, dtype=int)
         if not keyrate_df.empty:
             kr = keyrate_df.sort_values("date").set_index("date")["keyrate"]
@@ -112,16 +105,14 @@ class M1Reserves(BaseModule):
                           >= ABOVE_KEY_DAYS).astype(int)
 
         if is_daily:
-            # Дневные bliquidity-данные: мержим напрямую
             ru_df = ru.reset_index().rename(columns={"ruonia": "ruonia_avg"})
             ru_df["MAD_score_RUONIA"] = mad_ruonia_daily.values
             ru_df["Flag_AboveKey"] = flag_above.values
             df = pd.merge_asof(df.sort_values("date"),
                                ru_df.sort_values("date"),
                                on="date", direction="nearest", tolerance=pd.Timedelta("3d"))
-            window = MAD_WINDOW_DAILY  # 260 дней ≈ 1 год
+            window = MAD_WINDOW_DAILY
         else:
-            # Ежемесячные Excel-данные: агрегируем по месяцу
             ruonia_m = ru.resample("ME").mean().reset_index().rename(
                 columns={"ruonia": "ruonia_avg"})
             ruonia_mad = mad_ruonia_daily.resample("ME").last().reset_index().rename(
