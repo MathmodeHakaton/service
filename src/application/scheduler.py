@@ -30,8 +30,48 @@ class Scheduler:
             id="daily_lsi_calculation",
             replace_existing=True,
         )
+        # Ежедневный inference (быстрый: predict + SHAP, без fit).
+        # 15:30 — после устаканивания данных ЦБ за день.
+        self.scheduler.add_job(
+            self._daily_inference,
+            "cron",
+            hour=15,
+            minute=30,
+            id="daily_lsi_inference",
+            replace_existing=True,
+        )
+        # Еженедельное переобучение CatBoost — воскресенье 16:00,
+        # когда нагрузка минимальна и есть запас на CV/fit.
+        self.scheduler.add_job(
+            self._weekly_retrain,
+            "cron",
+            day_of_week="sun",
+            hour=16,
+            minute=0,
+            id="weekly_lsi_retrain",
+            replace_existing=True,
+        )
         self.scheduler.start()
-        logger.info("Scheduler started, next run at 15:00")
+        logger.info("Scheduler started: pipeline 15:00 daily, "
+                    "inference 15:30 daily, retrain 16:00 Sun")
+
+    def _daily_inference(self):
+        from src.application.lsi_refresh import refresh_lsi
+        try:
+            rep = refresh_lsi(mode="inference")
+            logger.info("Daily inference: ok=%s, mode=%s, copied=%d, err=%s",
+                        rep.ok, rep.mode, rep.artifacts_copied, rep.error)
+        except Exception as e:
+            logger.error("Daily inference failed: %s", e, exc_info=True)
+
+    def _weekly_retrain(self):
+        from src.application.lsi_refresh import refresh_lsi
+        try:
+            rep = refresh_lsi(mode="retrain")
+            logger.info("Weekly retrain: ok=%s, mode=%s, copied=%d, err=%s",
+                        rep.ok, rep.mode, rep.artifacts_copied, rep.error)
+        except Exception as e:
+            logger.error("Weekly retrain failed: %s", e, exc_info=True)
 
     def stop(self):
         """Остановить планировщик"""

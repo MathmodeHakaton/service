@@ -24,9 +24,15 @@ class Settings(BaseSettings):
     cache_dir: str = "./cache"
     cache_ttl_hours: int = 24
 
-    # LLM
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_model: str = "llama2"
+    # LLM — Yandex AI Studio
+    # Получить ключи: https://yandex.cloud/ai-studio
+    yandex_api_key: str = os.getenv("YANDEX_API_KEY", "")
+    yandex_folder_id: str = os.getenv("YANDEX_FOLDER_ID", "")
+    # Имя модели задаётся в формате "<name>/<version>", URL строится как
+    # gpt://{folder_id}/<name>/<version>
+    yandex_model_commentary: str = "yandexgpt-5-lite/latest"  # автокомментарий
+    yandex_model_chat: str = "yandexgpt-5-lite/latest"         # RAG-чат
+    yandex_base_url: str = "https://ai.api.cloud.yandex.net/v1"
 
     # Logging
     log_level: str = "INFO"

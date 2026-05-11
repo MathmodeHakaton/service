@@ -1,0 +1,8 @@
+numpy>=1.24
+pandas>=2.0
+scikit-learn>=1.3
+catboost>=1.2
+shap>=0.44
+joblib>=1.3
+matplotlib>=3.7
+requests>=2.31    # for Yandex AI Studio API calls (src/llm_commentator.py)
