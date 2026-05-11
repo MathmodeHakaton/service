@@ -57,4 +57,4 @@ fig1.update_layout(
     yaxis2=dict(title="RUONIA, %", overlaying="y", side="right"),
     height=400, legend=dict(x=0, y=1.12, orientation="h"),
 )
-st.plotly_chart(fig1, use_container_width=True)
+st.plotly_chart(fig1, width='stretch')

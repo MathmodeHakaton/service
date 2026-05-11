@@ -71,6 +71,6 @@ fig5.update_layout(
     height=400,
     legend=dict(x=0, y=1.12, orientation="h"),
 )
-st.plotly_chart(fig5, use_container_width=True)
+st.plotly_chart(fig5, width='stretch')
 st.caption(
     "Выше нуля = профицит (деньги с избытком). Ниже нуля = дефицит (банки занимают у ЦБ).")

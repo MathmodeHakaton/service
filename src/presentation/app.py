@@ -2,6 +2,7 @@
 RU Liquidity Sentinel — Streamlit Dashboard
 Запуск: streamlit run src/presentation/app.py --server.port 8501
 """
+import logging
 import os
 import json
 import streamlit as st
@@ -11,6 +12,10 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 
 st.set_page_config(
     page_title="RU Liquidity Sentinel",
@@ -398,7 +403,7 @@ fig_bar = go.Figure(go.Bar(
 ))
 fig_bar.update_layout(height=260, margin=dict(t=10, b=10, l=10, r=10),
                       yaxis_title="Вклад в LSI (пунктов)", showlegend=False)
-st.plotly_chart(fig_bar, use_container_width=True)
+st.plotly_chart(fig_bar, width='stretch')
 
 with st.expander("📐 Методология агрегации (формула LSI)"):
     m1v, m2v, m3v, m5v = (scores.get(k, 0) for k in ["M1", "M2", "M3", "M5"])
@@ -457,7 +462,7 @@ with tab1:
             yaxis2=dict(title="RUONIA, %", overlaying="y", side="right"),
             height=360, legend=dict(x=0, y=1.12, orientation="h"),
         )
-        st.plotly_chart(fig1, use_container_width=True)
+        st.plotly_chart(fig1, width='stretch')
 
     if not df1.empty:
         fig1b = go.Figure()
@@ -488,7 +493,7 @@ with tab1:
             yaxis=dict(title="Отклонение от нормы (σ)", range=[-5, 11]),
             height=300, legend=dict(x=0, y=1.15, orientation="h"),
         )
-        st.plotly_chart(fig1b, use_container_width=True)
+        st.plotly_chart(fig1b, width='stretch')
         st.caption("MAD_score_RUONIA и MAD_score_спред. 0 = норма · +3σ = стресс")
 
 # М2
@@ -526,7 +531,7 @@ with tab2:
             yaxis2=dict(title="MAD (σ)", overlaying="y", side="right"),
             height=380, legend=dict(x=0, y=1.18, orientation="h"),
         )
-        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig2, width='stretch')
 
     st.caption(
         "Основной сигнал M2 — MAD_score_rate_spread (переплата над ключевой ставкой).")
@@ -576,7 +581,7 @@ with tab3:
                 xaxis=dict(type="date"),
                 height=320,
             )
-            st.plotly_chart(fig3, use_container_width=True)
+            st.plotly_chart(fig3, width='stretch')
             st.markdown(
                 "🔴 Недоспрос (< 1.2) &nbsp;&nbsp; "
                 "🔵 Переспрос (> 2.0) &nbsp;&nbsp; "
@@ -596,7 +601,7 @@ with tab3:
                 yaxis_title="Доходность, % годовых",
                 height=240, showlegend=False,
             )
-            st.plotly_chart(fig3b, use_container_width=True)
+            st.plotly_chart(fig3b, width='stretch')
             st.caption("MAD_score_cover и MAD_score_yield_spread.")
     else:
         st.info("Нет данных ОФЗ — нужны результаты аукционов Минфина")
@@ -620,7 +625,7 @@ with tab4:
         st.markdown("**Ближайшие налоговые даты:**")
         st.dataframe(upcoming[["date", "tax_type"]].rename(
             columns={"date": "Дата", "tax_type": "Налог"}
-        ).reset_index(drop=True), use_container_width=True, hide_index=True)
+        ).reset_index(drop=True), width='stretch', hide_index=True)
 
     if df4 is not None and not df4.empty:
         fig4 = go.Figure()
@@ -639,7 +644,7 @@ with tab4:
             yaxis=dict(title="SF", range=[0.95, 1.5]),
             height=300, showlegend=False,
         )
-        st.plotly_chart(fig4, use_container_width=True)
+        st.plotly_chart(fig4, width='stretch')
         st.caption(
             "Tax_Week_Flag · End_of_Month_Flag · End_of_Quarter_Flag · Seasonal_Factor")
 
@@ -676,7 +681,7 @@ with tab5:
             yaxis_title="Баланс, млрд руб.",
             height=340, legend=dict(x=0, y=1.18, orientation="h"),
         )
-        st.plotly_chart(fig5, use_container_width=True)
+        st.plotly_chart(fig5, width='stretch')
 
         fig5b = go.Figure()
         if "MAD_score_ЦБ" in df5.columns:
@@ -698,7 +703,7 @@ with tab5:
             yaxis_title="Отклонение от нормы (σ)",
             height=260, legend=dict(x=0, y=1.18, orientation="h"),
         )
-        st.plotly_chart(fig5b, use_container_width=True)
+        st.plotly_chart(fig5b, width='stretch')
         st.caption("0 = норма · >0 дефицит (стресс) · <0 профицит (норма)")
 
 # Backtest
@@ -746,7 +751,7 @@ with tab6:
             xaxis_title="Дата",
             height=440, legend=dict(x=0, y=1.12, orientation="h"),
         )
-        st.plotly_chart(fig_bt, use_container_width=True)
+        st.plotly_chart(fig_bt, width='stretch')
 
         norm = bt_c[~(bt_c["date"].between("2022-02-01", "2022-05-01") |
                       bt_c["date"].between("2023-07-01", "2023-10-01"))]
@@ -759,11 +764,11 @@ with tab6:
                 rows.append({"Период": lbl, "Медиана LSI": sub["LSI"].median(),
                              "Макс LSI": sub["LSI"].max(), "Дней": len(sub)})
         st.dataframe(pd.DataFrame(rows).round(
-            1), use_container_width=True, hide_index=True)
+            1), width='stretch', hide_index=True)
 
         st.markdown("**Последние 20 дней:**")
         recent = bt_c[["date", "LSI", "status"]].tail(20).copy()
         recent["status"] = recent["status"].map(
             {"GREEN": "🟢 Норма", "YELLOW": "🟡 Внимание", "RED": "🔴 Стресс"})
         st.dataframe(recent.round(1).reset_index(drop=True),
-                     use_container_width=True, hide_index=True)
+                     width='stretch', hide_index=True)

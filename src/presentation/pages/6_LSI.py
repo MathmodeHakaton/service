@@ -116,7 +116,7 @@ with col_g:
         number={"suffix": " / 100", "font": {"size": 32}},
     ))
     fig.update_layout(height=260, margin=dict(t=30, b=10, l=10, r=10))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 with col_s:
     color = STATUS_COLOR.get(status, "#95a5a6")
@@ -153,7 +153,7 @@ fig_c = go.Figure(go.Bar(
 fig_c.add_vline(x=0, line_color="gray", line_dash="dot")
 fig_c.update_layout(height=300, margin=dict(t=10, b=10, l=10, r=20),
                     xaxis_title="Вклад в LSI (пунктов)")
-st.plotly_chart(fig_c, use_container_width=True)
+st.plotly_chart(fig_c, width='stretch')
 
 # LSI TIMESERIES
 st.subheader("История LSI")
@@ -184,4 +184,4 @@ fig_ts.add_hline(y=40, line_dash="dash", line_color="#27ae60")
 fig_ts.add_hline(y=70, line_dash="dash", line_color="#e74c3c")
 fig_ts.update_layout(height=420, yaxis=dict(range=[0, 105], title="LSI"),
                      xaxis_title="Дата", legend=dict(x=0, y=1.12, orientation="h"))
-st.plotly_chart(fig_ts, use_container_width=True)
+st.plotly_chart(fig_ts, width='stretch')

@@ -96,7 +96,7 @@ fig2.update_layout(
     height=400,
     legend=dict(x=0, y=1.12, orientation="h"),
 )
-st.plotly_chart(fig2, use_container_width=True)
+st.plotly_chart(fig2, width='stretch')
 
 col_s1, col_s2, col_s3 = st.columns(3)
 with col_s1:
@@ -142,6 +142,6 @@ if not df2.empty and "total_emergency_bln" in df2.columns:
                         side="right", showgrid=False),
             height=280, legend=dict(x=0, y=1.18, orientation="h"),
         )
-        st.plotly_chart(fig2b, use_container_width=True)
+        st.plotly_chart(fig2b, width='stretch')
         st.caption(
             "Появление > 0 = банк взял деньги по штрафной ставке выше ключевой.")

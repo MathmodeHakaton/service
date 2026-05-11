@@ -70,7 +70,7 @@ if len(auctions3):
         title=f"М3: Cover ratio аукционов ОФЗ  ({d_from} — {d_to})",
         yaxis_title="cover_ratio", xaxis=dict(type="date"), height=400,
     )
-    st.plotly_chart(fig3, use_container_width=True)
+    st.plotly_chart(fig3, width='stretch')
     st.markdown(
         "🔴 Недоспрос (< 1.2) &nbsp;&nbsp; 🔵 Переспрос (> 2.0) &nbsp;&nbsp; ⚪ Норма (1.2 – 2.0)")
     st.caption("Два столбика на дату = два выпуска ОФЗ в один день.")

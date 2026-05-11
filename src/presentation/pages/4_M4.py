@@ -29,7 +29,7 @@ if tax_df is not None and not tax_df.empty:
     st.markdown("**Ближайшие налоговые даты:**")
     st.dataframe(upcoming[["date", "tax_type"]].rename(
         columns={"date": "Дата", "tax_type": "Налог"}
-    ).reset_index(drop=True), use_container_width=True, hide_index=True)
+    ).reset_index(drop=True), width='stretch', hide_index=True)
 
 if df4 is not None and not df4.empty:
     fig4 = go.Figure()
@@ -47,6 +47,6 @@ if df4 is not None and not df4.empty:
         title="М4: Seasonal_Factor — налоговый мультипликатор LSI",
         yaxis=dict(title="SF", range=[0.95, 1.5]), height=300, showlegend=False,
     )
-    st.plotly_chart(fig4, use_container_width=True)
+    st.plotly_chart(fig4, width='stretch')
     st.caption(
         "×1.1 — налоговая неделя · ×1.2 — конец месяца · ×1.4 — конец квартала")
