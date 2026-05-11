@@ -23,12 +23,12 @@ logger = logging.getLogger(__name__)
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; LiquiditySentinel/1.0)"}
 
-RESERVES_URL   = "https://www.cbr.ru/vfs/hd_base/RReserves/required_reserves_table.xlsx"
-RUONIA_URL     = "https://www.cbr.ru/hd_base/ruonia/dynamics/"
-REPO_URL       = "https://www.cbr.ru/hd_base/repo/"
+RESERVES_URL = "https://www.cbr.ru/vfs/hd_base/RReserves/required_reserves_table.xlsx"
+RUONIA_URL = "https://www.cbr.ru/hd_base/ruonia/dynamics/"
+REPO_URL = "https://www.cbr.ru/hd_base/repo/"
 REPO_PARAM_URL = "https://www.cbr.ru/hd_base/dirrepoauctionparam/"
-KEYRATE_URL    = "https://www.cbr.ru/hd_base/keyrate/"
-BLIQ_URL       = "https://www.cbr.ru/hd_base/bliquidity/"
+KEYRATE_URL = "https://www.cbr.ru/hd_base/keyrate/"
+BLIQ_URL = "https://www.cbr.ru/hd_base/bliquidity/"
 
 
 def _get_html_table(url: str, params: dict) -> Optional[pd.DataFrame]:
@@ -41,7 +41,8 @@ def _get_html_table(url: str, params: dict) -> Optional[pd.DataFrame]:
         if table is None:
             raise ValueError(f"Таблица не найдена: {url}")
         headers_row = table.find("tr")
-        col_names = [th.get_text(strip=True) for th in headers_row.find_all(["th", "td"])]
+        col_names = [th.get_text(strip=True)
+                     for th in headers_row.find_all(["th", "td"])]
         rows = []
         for tr in table.find_all("tr")[1:]:
             cells = [td.get_text(strip=True) for td in tr.find_all("td")]
@@ -81,7 +82,7 @@ class CBRFetcher(BaseFetcher):
             ("reserves",   self.fetch_reserves),
             ("ruonia",     self.fetch_ruonia),
             ("repo",       self.fetch_repo),
-            ("repo_params",self.fetch_repo_params),
+            ("repo_params", self.fetch_repo_params),
             ("keyrate",    self.fetch_keyrate),
             ("bliquidity", self.fetch_bliquidity),
         ]:
@@ -99,6 +100,7 @@ class CBRFetcher(BaseFetcher):
             last_updated=datetime.now(),
             status=status,
             error_message="; ".join(errors) if errors else None,
+            source_url="https://www.cbr.ru",
         )
 
     # ── М1: Обязательные резервы ──────────────────────────────────────────
@@ -107,7 +109,8 @@ class CBRFetcher(BaseFetcher):
         cache = self.cache_dir / "required_reserves.xlsx"
         raw = None
         try:
-            r = requests.get(RESERVES_URL, headers=HEADERS, timeout=self.timeout)
+            r = requests.get(RESERVES_URL, headers=HEADERS,
+                             timeout=self.timeout)
             r.raise_for_status()
             raw = r.content
             cache.write_bytes(raw)
@@ -119,7 +122,8 @@ class CBRFetcher(BaseFetcher):
                 raise
 
         src = BytesIO(raw)
-        probe = pd.read_excel(src, sheet_name=0, header=None, nrows=15, dtype=str)
+        probe = pd.read_excel(
+            src, sheet_name=0, header=None, nrows=15, dtype=str)
         header_row = self._find_header_row(probe)
         src.seek(0)
         df = pd.read_excel(src, sheet_name=0, header=header_row)
@@ -150,10 +154,12 @@ class CBRFetcher(BaseFetcher):
                     assigned.add(c)
                     break
         df = df.rename(columns=col_map)
-        keep = [c for c in ("date", "actual_avg", "required_avg", "required_account") if c in df.columns]
+        keep = [c for c in ("date", "actual_avg", "required_avg",
+                            "required_account") if c in df.columns]
         df = df[keep].copy()
         if "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"], errors="coerce", dayfirst=True)
+            df["date"] = pd.to_datetime(
+                df["date"], errors="coerce", dayfirst=True)
             df = df.dropna(subset=["date"])
         for col in ("actual_avg", "required_avg", "required_account"):
             if col in df.columns:
@@ -182,7 +188,8 @@ class CBRFetcher(BaseFetcher):
                 if len(cells) >= 2:
                     rows.append({"date": cells[0], "ruonia": cells[1]})
             df = pd.DataFrame(rows)
-            df["date"] = pd.to_datetime(df["date"], format="%d.%m.%Y", errors="coerce")
+            df["date"] = pd.to_datetime(
+                df["date"], format="%d.%m.%Y", errors="coerce")
             df["ruonia"] = pd.to_numeric(
                 df["ruonia"].str.replace(",", ".").str.replace("\xa0", ""), errors="coerce"
             )
@@ -201,16 +208,22 @@ class CBRFetcher(BaseFetcher):
         cache = self.cache_dir / "repo_results.csv"
         df = _get_html_table(REPO_URL, _date_range_params(date_from))
         if df is not None:
-            df.columns = ["type", "term_days", "date", "time", "volume_mln", "rate_wavg", "settlement"]
-            df["date"]       = pd.to_datetime(df["date"], format="%d.%m.%Y", errors="coerce")
-            df["term_days"]  = pd.to_numeric(df["term_days"], errors="coerce").astype("Int64")
+            df.columns = ["type", "term_days", "date", "time",
+                          "volume_mln", "rate_wavg", "settlement"]
+            df["date"] = pd.to_datetime(
+                df["date"], format="%d.%m.%Y", errors="coerce")
+            df["term_days"] = pd.to_numeric(
+                df["term_days"], errors="coerce").astype("Int64")
             df["volume_mln"] = pd.to_numeric(
-                df["volume_mln"].str.replace(r"[\s\xa0]", "", regex=True).str.replace(",", "."),
+                df["volume_mln"].str.replace(
+                    r"[\s\xa0]", "", regex=True).str.replace(",", "."),
                 errors="coerce"
             )
             df["volume_bln"] = df["volume_mln"] / 1000
-            df["rate_wavg"]  = pd.to_numeric(df["rate_wavg"].str.replace(",", "."), errors="coerce")
-            df = df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+            df["rate_wavg"] = pd.to_numeric(
+                df["rate_wavg"].str.replace(",", "."), errors="coerce")
+            df = df.dropna(subset=["date"]).sort_values(
+                "date").reset_index(drop=True)
             df.to_csv(cache, index=False)
             return df
         if cache.exists():
@@ -222,15 +235,21 @@ class CBRFetcher(BaseFetcher):
         cache = self.cache_dir / "repo_params.csv"
         df = _get_html_table(REPO_PARAM_URL, _date_range_params(date_from))
         if df is not None:
-            df.columns = ["date", "instrument_type", "term_raw", "settle1", "settle2", "limit_bln", "min_rate"]
-            df["date"]      = pd.to_datetime(df["date"], format="%d.%m.%Y", errors="coerce")
-            df["term_days"] = pd.to_numeric(df["term_raw"].str.extract(r"(\d+)")[0], errors="coerce").astype("Int64")
+            df.columns = ["date", "instrument_type", "term_raw",
+                          "settle1", "settle2", "limit_bln", "min_rate"]
+            df["date"] = pd.to_datetime(
+                df["date"], format="%d.%m.%Y", errors="coerce")
+            df["term_days"] = pd.to_numeric(df["term_raw"].str.extract(
+                r"(\d+)")[0], errors="coerce").astype("Int64")
             df["limit_bln"] = pd.to_numeric(
-                df["limit_bln"].str.replace(r"[\s\xa0]", "", regex=True).str.replace(",", "."),
+                df["limit_bln"].str.replace(
+                    r"[\s\xa0]", "", regex=True).str.replace(",", "."),
                 errors="coerce"
             )
-            df["min_rate"]  = pd.to_numeric(df["min_rate"].str.replace(",", "."), errors="coerce")
-            df = df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+            df["min_rate"] = pd.to_numeric(
+                df["min_rate"].str.replace(",", "."), errors="coerce")
+            df = df.dropna(subset=["date"]).sort_values(
+                "date").reset_index(drop=True)
             df.to_csv(cache, index=False)
             return df[["date", "term_days", "limit_bln", "min_rate"]]
         if cache.exists():
@@ -244,8 +263,10 @@ class CBRFetcher(BaseFetcher):
         df = _get_html_table(KEYRATE_URL, _date_range_params(date_from))
         if df is not None:
             df.columns = ["date", "keyrate"]
-            df["date"]    = pd.to_datetime(df["date"], format="%d.%m.%Y", errors="coerce")
-            df["keyrate"] = pd.to_numeric(df["keyrate"].str.replace(",", "."), errors="coerce")
+            df["date"] = pd.to_datetime(
+                df["date"], format="%d.%m.%Y", errors="coerce")
+            df["keyrate"] = pd.to_numeric(
+                df["keyrate"].str.replace(",", "."), errors="coerce")
             df = df.dropna().sort_values("date").reset_index(drop=True)
             df.to_csv(cache, index=False)
             return df
@@ -258,7 +279,9 @@ class CBRFetcher(BaseFetcher):
         """Скачивает структурный баланс ликвидности банковского сектора."""
         cache = self.cache_dir / "bliquidity.csv"
         try:
-            import ssl, urllib.request, urllib.parse
+            import ssl
+            import urllib.request
+            import urllib.parse
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
@@ -278,11 +301,14 @@ class CBRFetcher(BaseFetcher):
             for tr in table.find_all("tr")[1:]:
                 cells = [td.get_text(strip=True) for td in tr.find_all("td")]
                 if len(cells) >= 2:
-                    rows.append({"date": cells[0], "structural_balance_bln": cells[1]})
+                    rows.append(
+                        {"date": cells[0], "structural_balance_bln": cells[1]})
             df = pd.DataFrame(rows)
-            df["date"] = pd.to_datetime(df["date"], format="%d.%m.%Y", errors="coerce")
+            df["date"] = pd.to_datetime(
+                df["date"], format="%d.%m.%Y", errors="coerce")
             df["structural_balance_bln"] = pd.to_numeric(
-                df["structural_balance_bln"].str.replace(r"[\s\xa0]", "", regex=True).str.replace(",", "."),
+                df["structural_balance_bln"].str.replace(
+                    r"[\s\xa0]", "", regex=True).str.replace(",", "."),
                 errors="coerce"
             )
             df = df.dropna().sort_values("date").reset_index(drop=True)

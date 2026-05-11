@@ -24,4 +24,5 @@ class FakeFetcher(BaseFetcher):
             data=data,
             last_updated=datetime.now(),
             status="success",
+            source_url=None,
         )

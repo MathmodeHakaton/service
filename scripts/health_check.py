@@ -39,7 +39,7 @@ def check_database() -> Tuple[bool, list]:
     try:
         from src.infrastructure.storage.db.engine import get_session
 
-        session = next(get_session())
+        session = get_session()
         # Простой тест
         session.execute("SELECT 1")
         session.close()
@@ -60,7 +60,7 @@ def check_migrations() -> Tuple[bool, list]:
     try:
         from src.infrastructure.storage.db.engine import get_session
 
-        session = next(get_session())
+        session = get_session()
         # Проверяем что таблица кэша существует
         result = session.execute(
             "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name = 'fetch_cache')"

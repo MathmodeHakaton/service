@@ -42,6 +42,7 @@ class MinfinFetcher(BaseFetcher):
                 data={"ofz": df},
                 last_updated=datetime.now(),
                 status="success",
+                source_url=MINFIN_OFZ_URL,
             )
         except Exception as e:
             logger.warning("Minfin fetch failed: %s", e)
@@ -50,6 +51,7 @@ class MinfinFetcher(BaseFetcher):
                 last_updated=datetime.now(),
                 status="error",
                 error_message=str(e),
+                source_url=MINFIN_OFZ_URL,
             )
 
     def fetch_ofz(self) -> pd.DataFrame:
@@ -61,7 +63,8 @@ class MinfinFetcher(BaseFetcher):
         """
         cache = self.cache_dir / "ofz_auctions.csv"
         try:
-            r = requests.get(MINFIN_OFZ_URL, headers=HEADERS, timeout=self.timeout, verify=False)
+            r = requests.get(MINFIN_OFZ_URL, headers=HEADERS,
+                             timeout=self.timeout, verify=False)
             r.raise_for_status()
             df = self._parse_minfin_html(r.text)
             if df is not None and len(df) > 0:
@@ -94,7 +97,8 @@ class MinfinFetcher(BaseFetcher):
         if not rows:
             return None
 
-        df = pd.DataFrame(rows, columns=headers[:len(rows[0])] if headers else None)
+        df = pd.DataFrame(
+            rows, columns=headers[:len(rows[0])] if headers else None)
         return self._normalize_columns(df)
 
     def _normalize_columns(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -120,7 +124,8 @@ class MinfinFetcher(BaseFetcher):
         df = df.rename(columns=rename)
 
         if "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce")
+            df["date"] = pd.to_datetime(
+                df["date"], dayfirst=True, errors="coerce")
 
         for col in ["offer_volume", "demand_volume", "placement_volume", "avg_yield"]:
             if col in df.columns:
@@ -133,10 +138,12 @@ class MinfinFetcher(BaseFetcher):
 
         # cover_ratio = demand / placement (правильная формула)
         if "demand_volume" in df.columns and "placement_volume" in df.columns:
-            df["cover_ratio"] = df["demand_volume"] / df["placement_volume"].replace(0, np.nan)
+            df["cover_ratio"] = df["demand_volume"] / \
+                df["placement_volume"].replace(0, np.nan)
 
         # bid_cover = demand / offer (объёмный, норма < 1 для РФ)
         if "demand_volume" in df.columns and "offer_volume" in df.columns:
-            df["bid_cover"] = df["demand_volume"] / df["offer_volume"].replace(0, np.nan)
+            df["bid_cover"] = df["demand_volume"] / \
+                df["offer_volume"].replace(0, np.nan)
 
         return df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)

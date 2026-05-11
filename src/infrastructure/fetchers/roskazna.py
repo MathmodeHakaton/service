@@ -26,7 +26,8 @@ class RoskaznaFetcher(BaseFetcher):
 
     def __init__(self, cache_dir: str = "./cache/cbr", timeout: int = 60, retries: int = 3):
         super().__init__(timeout=timeout, retries=retries)
-        self._cbr = CBRFetcher(cache_dir=cache_dir, timeout=timeout, retries=retries)
+        self._cbr = CBRFetcher(cache_dir=cache_dir,
+                               timeout=timeout, retries=retries)
 
     def fetch(self) -> FetcherResult:
         """
@@ -41,6 +42,7 @@ class RoskaznaFetcher(BaseFetcher):
                 last_updated=datetime.now(),
                 status="partial",
                 error_message="Росказна SSL недоступна; используются данные ЦБ bliquidity",
+                source_url="https://www.cbr.ru/hd_base/bliquidity/",
             )
         except Exception as e:
             logger.warning("Roskazna/CBR fetch failed: %s", e)
@@ -49,4 +51,5 @@ class RoskaznaFetcher(BaseFetcher):
                 last_updated=datetime.now(),
                 status="error",
                 error_message=str(e),
+                source_url="https://www.cbr.ru/hd_base/bliquidity/",
             )

@@ -112,6 +112,7 @@ class FNSFetcher(BaseFetcher):
                 data={"tax_calendar": df},
                 last_updated=datetime.now(),
                 status="success",
+                source_url=None,
             )
         except Exception as e:
             return FetcherResult(
@@ -119,6 +120,7 @@ class FNSFetcher(BaseFetcher):
                 last_updated=datetime.now(),
                 status="error",
                 error_message=str(e),
+                source_url=None,
             )
 
     def generate_tax_calendar(self, start_year: int = 2014, end_year: int = None) -> pd.DataFrame:
