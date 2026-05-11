@@ -76,7 +76,8 @@ class LSIEngine:
             active = {"M1_RESERVES": 0.5}
 
         w_total = sum(self.weights.get(k, 0.25) for k in active)
-        base_lsi = sum(self.weights.get(k, 0.25) / w_total * v for k, v in active.items())
+        base_lsi = sum(self.weights.get(k, 0.25) /
+                       w_total * v for k, v in active.items())
 
         lsi_value = float(np.clip(base_lsi * seasonal_factor, 0.0, 1.0))
 
@@ -108,21 +109,25 @@ class LSIEngine:
 
     def _score_m1(self, r: dict) -> float:
         """MAD_score_RUONIA × 0.60 + MAD_score_спред × 0.40 + бонус флагов."""
-        mad_ru  = float(r.get("MAD_score_RUONIA", 0) or 0)
-        mad_sp  = float(r.get("MAD_score_спред",  0) or 0)
-        flag_ak = int(r.get("Flag_AboveKey",    0) or 0)
+        mad_ru = float(r.get("MAD_score_RUONIA", 0) or 0)
+        mad_sp = float(r.get("MAD_score_спред",  0) or 0)
+        flag_ak = int(r.get("Flag_AboveKey", 0) or 0) if pd.notna(
+            r.get("Flag_AboveKey", 0)) else 0
         flag_ep = int(r.get("Flag_EndOfPeriod", 0) or 0)
         s = _sigmoid(0.60 * mad_ru + 0.40 * mad_sp)
-        if flag_ak: s = min(s + 0.08, 1.0)
-        if flag_ep: s = min(s + 0.05, 1.0)
+        if flag_ak:
+            s = min(s + 0.08, 1.0)
+        if flag_ep:
+            s = min(s + 0.05, 1.0)
         return float(np.clip(s, 0.0, 1.0))
 
     def _score_m2(self, r: dict) -> float:
         """MAD_score_rate_spread + бонус Flag_Demand."""
-        mad_r  = float(r.get("MAD_score_rate_spread", 0) or 0)
+        mad_r = float(r.get("MAD_score_rate_spread", 0) or 0)
         flag_d = int(r.get("Flag_Demand", 0) or 0)
         s = _sigmoid(mad_r)
-        if flag_d: s = min(s + 0.10, 1.0)
+        if flag_d:
+            s = min(s + 0.10, 1.0)
         return float(np.clip(s, 0.0, 1.0))
 
     def _score_m3(self, r: dict):
@@ -140,9 +145,10 @@ class LSIEngine:
 
     def _score_m5(self, r: dict) -> float:
         """MAD_score_ЦБ × 0.88 + MAD_score_Росказна × 0.12 + Flag_Budget_Drain."""
-        mad_b  = float(r.get("MAD_score_ЦБ",       0) or 0)
+        mad_b = float(r.get("MAD_score_ЦБ",       0) or 0)
         mad_rk = float(r.get("MAD_score_Росказна",  0) or 0)
-        flag   = int(r.get("Flag_Budget_Drain",     0) or 0)
+        flag = int(r.get("Flag_Budget_Drain",     0) or 0)
         s = _sigmoid(0.88 * mad_b + 0.12 * mad_rk)
-        if flag: s = min(s + 0.15, 1.0)
+        if flag:
+            s = min(s + 0.15, 1.0)
         return float(np.clip(s, 0.0, 1.0))

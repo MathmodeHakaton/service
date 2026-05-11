@@ -210,13 +210,10 @@ class MinfinFetcher(BaseFetcher):
     def _normalize_columns(self, df: pd.DataFrame) -> pd.DataFrame | None:
         """Стандартизация колонок Минфина."""
         if df.empty:
-            logger.warning("DataFrame пуст")
             return None
 
-        # Обработаем дублирующиеся имена колонок, если они остались
+        # Дедупликация ДО переименования
         if df.columns.duplicated().any():
-            logger.warning(
-                f"Обнаружены дублирующиеся имена колонок: {df.columns.tolist()}")
             df.columns = self._deduplicate_headers(df.columns.tolist())
 
         logger.debug(f"Исходные колонки: {df.columns.tolist()}")
@@ -248,15 +245,21 @@ class MinfinFetcher(BaseFetcher):
         # Обработка даты
         if "date" in df.columns:
             try:
-                # Сначала убедимся, что это Series, а не DataFrame
+                # Если дублирующиеся колонки — берём первую явно
                 date_col = df["date"]
                 if isinstance(date_col, pd.DataFrame):
                     logger.warning("date — DataFrame, беру первую колонку")
                     date_col = date_col.iloc[:, 0]
+                    # Убираем дубликаты — оставляем только одну колонку date
+                    df = df.loc[:, ~df.columns.duplicated()]
+                    df["date"] = date_col
 
-                date_col = date_col.astype(str).str.strip()
                 df["date"] = pd.to_datetime(
-                    date_col, dayfirst=True, errors="coerce")
+                    df["date"].astype(str).str.strip(),
+                    dayfirst=True,
+                    errors="coerce",
+                    format="mixed",   # ← явно указываем mixed чтобы убрать warning
+                )
                 valid_dates = df["date"].notna().sum()
                 logger.debug(
                     f"Дата спарсена, валидных значений: {valid_dates}/{len(df)}")
