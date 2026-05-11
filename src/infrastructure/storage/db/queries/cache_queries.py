@@ -30,19 +30,18 @@ class CacheQueries:
         source_url: str = None,
         status: str = "fresh",
     ) -> None:
-        """Сохранить или обновить кеш для источника"""
         query = text("""
             INSERT INTO fetch_cache
                 (source_key, fetched_at, expires_at, status, row_count, source_url, payload)
             VALUES
-                (:key, NOW(), :expires_at, :status, :row_count, :source_url, :payload::jsonb)
+                (%(key)s, NOW(), %(expires_at)s, %(status)s, %(row_count)s, %(source_url)s, %(payload)s::jsonb)
             ON CONFLICT (source_key) DO UPDATE SET
                 fetched_at  = NOW(),
-                expires_at  = :expires_at,
-                status      = :status,
-                row_count   = :row_count,
-                source_url  = :source_url,
-                payload     = :payload::jsonb
+                expires_at  = %(expires_at)s,
+                status      = %(status)s,
+                row_count   = %(row_count)s,
+                source_url  = %(source_url)s,
+                payload     = %(payload)s::jsonb
         """)
         session.execute(query, {
             "key": source_key,
