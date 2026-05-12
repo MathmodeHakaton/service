@@ -230,21 +230,6 @@ python scripts/compute_metrics.py --k 6
   `.env.example` содержит плейсхолдеры, реальный `.env` под `.gitignore`.
 
 ---
-
-## Документация
-
-- [docs/LSI_INTEGRATION_REPORT.md](docs/LSI_INTEGRATION_REPORT.md) —
-  полный пайплайн модели и RAG-агента.
-- [docs/METRICS_REPORT.md](docs/METRICS_REPORT.md) — метрики качества
-  (Holdout MAE, Crisis recall, Retriever Recall@k/MRR на golden-set).
-- [ml_model/MODEL_EXPLANATION.md](ml_model/MODEL_EXPLANATION.md) —
-  объяснение почему weak-target + SHAP-агрегатор, а не фиксированные веса.
-- [DEPLOYMENT.md](DEPLOYMENT.md) — деплой Postgres + Streamlit Cloud.
-- [STREAMLIT_CLOUD_DEPLOYMENT.md](STREAMLIT_CLOUD_DEPLOYMENT.md) — детали
-  настройки на Streamlit Cloud (secrets, БД, ресурсы).
-
----
-
 ## Контакты по ТЗ
 
 ТЗ от ПСБ Казначейство: VI Весенняя школа «Информационные технологии и
