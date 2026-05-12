@@ -10,26 +10,27 @@ LLM Аналитик — RAG-чат по данным системы (YandexGPT 
 Off-topic-вопросы блокируются строгим system-промптом.
 """
 from __future__ import annotations
-
-import sys
-from pathlib import Path
-from datetime import datetime
-
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-
-import pandas as pd
-import streamlit as st
-
-st.set_page_config(page_title="LLM · Аналитик", page_icon="💬", layout="wide")
-
-from config.settings import get_settings
-from src.presentation.rag.knowledge_base import build_knowledge_base
-from src.presentation.rag.retriever import retrieve
-from src.presentation.rag.chat_llm import call_chat
 from src.presentation.rag.guardrails import (
     CANONICAL_REFUSAL, is_prompt_injection, looks_like_refusal,
     filter_history_for_llm,
 )
+from src.presentation.rag.chat_llm import call_chat
+from src.presentation.rag.retriever import retrieve
+from src.presentation.rag.knowledge_base import build_knowledge_base
+from config.settings import get_settings
+import streamlit as st
+import pandas as pd
+
+import sys
+from pathlib import Path
+from datetime import datetime
+import time
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+
+st.set_page_config(page_title="LLM · Аналитик", page_icon="💬", layout="wide")
+
 
 settings = get_settings()
 creds_ok = bool(settings.yandex_api_key and settings.yandex_folder_id)
@@ -37,6 +38,49 @@ creds_ok = bool(settings.yandex_api_key and settings.yandex_folder_id)
 st.title("LLM — AI Аналитик")
 st.caption("RAG-чат по артефактам модели и описаниям модулей. "
            "Отвечает строго по документам системы.")
+
+# ── Анимация загрузки ──────────────────────────────────────────────────────
+placeholder_loading = st.empty()
+with placeholder_loading.container():
+    col1, col2, col3 = st.columns([1, 2, 1], vertical_alignment="center")
+    with col2:
+        st.markdown("""
+        <div style="text-align: center; padding: 30px;">
+            <div style="font-size: 48px; margin-bottom: 20px; animation: spin 2s linear infinite;">⚡</div>
+            <h3>Инициализация LLM Аналитика...</h3>
+            <div style="margin-top: 20px;">
+                <div style="
+                    width: 100%;
+                    height: 8px;
+                    background: #e0e0e0;
+                    border-radius: 4px;
+                    overflow: hidden;
+                ">
+                    <div style="
+                        width: 100%;
+                        height: 100%;
+                        background: linear-gradient(90deg, #4CAF50, #45a049);
+                        animation: progress 3s ease-in-out forwards;
+                    "></div>
+                </div>
+            </div>
+            <p style="margin-top: 20px; color: #666;">Загружаю модель и knowledge base...</p>
+        </div>
+        <style>
+            @keyframes progress {
+                0% { width: 0%; }
+                50% { width: 70%; }
+                100% { width: 100%; }
+            }
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+        </style>
+        """, unsafe_allow_html=True)
+    time.sleep(3)
+
+placeholder_loading.empty()
 
 
 # ── KB ────────────────────────────────────────────────────────────────────
@@ -74,14 +118,16 @@ with st.sidebar:
         _kb.clear()
         st.rerun()
     st.divider()
-    st.write("**Yandex AI Studio:** " + ("✅ ключи заданы" if creds_ok else "⛔ нет ключей"))
+    st.write("**Yandex AI Studio:** " +
+             ("✅ ключи заданы" if creds_ok else "⛔ нет ключей"))
     st.caption(f"Модель: `{settings.yandex_model_chat}`")
     st.caption(f"Чанков в KB: **{len(chunks)}**")
 
 
 with st.expander("📚 Все чанки knowledge base"):
     for c in chunks:
-        st.markdown(f"**{c.title}** *({c.kind}, tags: {', '.join(sorted(c.tags)) or '—'})*")
+        st.markdown(
+            f"**{c.title}** *({c.kind}, tags: {', '.join(sorted(c.tags)) or '—'})*")
         st.write(c.text)
 
 
@@ -106,7 +152,8 @@ if prompt:
         st.error("Не заданы YANDEX_API_KEY и YANDEX_FOLDER_ID — чат отключён. "
                  "Добавьте их в `.env` или переменные окружения.")
     else:
-        st.session_state.chat_history.append({"role": "user", "content": prompt})
+        st.session_state.chat_history.append(
+            {"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
@@ -118,7 +165,8 @@ if prompt:
         else:
             retrieved = retrieve(prompt, chunks, k=top_k)
             # 2) В LLM шлём отфильтрованную историю — без прежних отказов и их триггеров.
-            clean_history = filter_history_for_llm(st.session_state.chat_history)
+            clean_history = filter_history_for_llm(
+                st.session_state.chat_history)
             with st.chat_message("assistant"):
                 placeholder = st.empty()
                 placeholder.markdown("_думаю…_")
@@ -143,7 +191,8 @@ if prompt:
         if not retrieved:
             with st.chat_message("assistant"):
                 st.markdown(answer)
-                st.caption("🛡 Заблокировано локальным guardrail (prompt-injection).")
+                st.caption(
+                    "🛡 Заблокировано локальным guardrail (prompt-injection).")
 
         st.session_state.chat_history.append({
             "role": "assistant",
