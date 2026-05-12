@@ -22,9 +22,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 
-st.set_page_config(page_title="LSI · Агрегация", page_icon="📊", layout="wide")
+# st.set_page_config(page_title="LSI · Агрегация", page_icon="📊", layout="wide")
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[2]
 ART = ROOT / "data" / "model_artifacts"
 MODULE_LABELS = {"M1": "М1 · Резервы", "M2": "М2 · Репо ЦБ", "M3": "М3 · ОФЗ",
                  "M4": "М4 · Сезонность", "M5": "М5 · Казначейство"}
