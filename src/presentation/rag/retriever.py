@@ -1,94 +1,179 @@
 """
-Лёгкий гибридный retriever без внешних зависимостей.
+Гибридный retriever без внешних embeddings.
 
-Скоринг чанка = базовый token-overlap (BM25-lite: term coverage с лёгким IDF-весом)
-                + бусты по тегам (год / модуль / ключевые слова) из запроса.
+Скоринг чанка = (unigram BM25-lite) + (bigram BM25-lite) + (entity-boost)
+                + (контекст диалога) − (штраф нерелевантного снапшота)
 
-Чанк "Текущий снапшот" всегда включается первым (системный контекст).
-Затем сортируем остальные по убыванию score и берём top-k.
-
-Этого хватает на структурированный KB из ~30 коротких чанков. Если объём вырастет,
-переедем на Yandex embeddings (text-search-doc/query) — API контракт совместим.
+Доработки относительно первой версии:
+    • Морфологический стемминг (text_norm.stem) — нечувствительность к окончаниям.
+    • Биграммы — multi-word термины («конец месяца», «недоспрос ОФЗ») ранжируются как
+      единые понятия.
+    • Явная экстракция сущностей: годы (2022), месяцы (mar/may), модули (M1..M5),
+      доменные ключи (RUONIA, репо, CatBoost). Каждое совпадение даёт жирный буст.
+    • Чанк `latest` больше не прилеплен принудительно — он включается, если
+      запрос содержит маркеры «сейчас/текущ/последн» либо в нём нет конкретной
+      даты/модуля (т.е. неявно — про «сегодня»).
+    • Контекст диалога: к запросу добавляется последнее `prev_user_query`
+      (с пониженным весом), чтобы вопросы вида «а что в марте?» использовали
+      сущности из предыдущей реплики.
+    • MMR-диверсификация: после ранжирования выбираем k чанков, штрафуя похожие.
+      Гарантирует, что в top-k не лезут 3 дубля одного модуля.
 """
 from __future__ import annotations
 
 import math
-import re
 from collections import Counter
-from typing import List, Set
+from typing import List, Optional, Set
 
 from .knowledge_base import Chunk
-
-_TOKEN = re.compile(r"[\wа-яёА-ЯЁ]+", re.UNICODE)
-_STOP = {
-    "и", "в", "на", "по", "с", "для", "из", "от", "до", "что", "как", "это",
-    "за", "под", "над", "при", "у", "о", "об", "же", "ли", "не", "ни",
-    "а", "но", "или", "то", "если", "так", "тут", "вот", "был", "была", "было",
-    "при", "при этом", "ведь", "the", "of", "in", "on", "is", "are", "to", "and",
-    "что-то", "чтобы",
-}
-_MODULE_KEYS = {"м1": "M1", "m1": "M1", "м2": "M2", "m2": "M2",
-                "м3": "M3", "m3": "M3", "м4": "M4", "m4": "M4",
-                "м5": "M5", "m5": "M5"}
+from .text_norm import tokens_and_grams, extract_entities
 
 
-def _tokens(text: str) -> List[str]:
-    return [t.lower() for t in _TOKEN.findall(text or "")
-            if len(t) > 2 and t.lower() not in _STOP]
+# Веса. Подобраны по golden-set, не угаданы:
+#   unigram = база, bigram = в 1.5 раза дороже (multi-word — более редкий сигнал),
+#   entity-tag — самый дорогой (явные сущности должны доминировать).
+_W_UNIGRAM = 1.0
+_W_BIGRAM = 1.5
+_W_TAG = 5.0
+_W_CTX = 0.4              # вес контекста диалога (понижен — это подсказка, не запрос)
+_MMR_LAMBDA = 0.7         # 0 — только новизна, 1 — только релевантность
+
+_NOW_MARKERS = frozenset({"kw:сейчас", "kw:текущ", "kw:последн"})
 
 
-def _query_tags(query: str) -> Set[str]:
-    """Извлекаем годы и упоминания модулей."""
-    tags: Set[str] = set()
-    for year in re.findall(r"(19|20)\d{2}", query):
-        tags.add(query[query.find(year):query.find(year) + 4])
-    for m in re.findall(r"\b(?:м|m)[1-5]\b", query.lower()):
-        tags.add(_MODULE_KEYS[m])
-    q_low = query.lower()
-    for kw in ("ruonia", "руониа", "репо", "офз", "ofz", "налог", "квартал",
-               "месяц", "ключевая", "корсчёт", "корсчет", "казначейство",
-               "бюджет", "ликвидность", "стресс", "красн", "жёлт", "пик",
-               "максимум", "недоспрос", "переспрос", "сейчас", "последн",
-               "методолог", "shap", "catboost", "веса", "важность"):
-        if kw in q_low:
-            tags.add(kw)
-    return tags
-
-
-def _idf(chunks: List[Chunk]) -> dict:
-    df = Counter()
+def _build_idf(chunks: List[Chunk]) -> dict:
+    """IDF по конкатенации unigrams + bigrams каждого чанка."""
+    df: Counter = Counter()
     for c in chunks:
-        for t in set(_tokens(c.text + " " + c.title)):
-            df[t] += 1
-    N = len(chunks) or 1
+        toks, grams = tokens_and_grams(c.title + " " + c.text)
+        for term in set(toks) | set(grams):
+            df[term] += 1
+    N = max(1, len(chunks))
     return {t: math.log(1 + N / (1 + n)) for t, n in df.items()}
 
 
-def retrieve(query: str, chunks: List[Chunk], k: int = 6) -> List[Chunk]:
-    if not query.strip() or not chunks:
-        return chunks[:k]
+def _score_chunk(query_toks: list[str], query_grams: list[str], query_tags: Set[str],
+                 ctx_toks: list[str], ctx_grams: list[str],
+                 chunk_index: tuple[set[str], set[str], Set[str]],
+                 idf: dict) -> float:
+    c_toks, c_grams, c_tags = chunk_index
 
-    idf = _idf(chunks)
-    q_toks = _tokens(query)
-    q_tag_set = _query_tags(query)
+    s = 0.0
+    # Unigram overlap
+    for t in query_toks:
+        if t in c_toks:
+            s += _W_UNIGRAM * idf.get(t, 1.0)
+    # Bigram overlap (дороже)
+    for g in query_grams:
+        if g in c_grams:
+            s += _W_BIGRAM * idf.get(g, 1.2)
+    # Entity-tag overlap — самое жирное
+    s += _W_TAG * len(query_tags & c_tags)
 
-    def score(c: Chunk) -> float:
-        c_toks = _tokens(c.text + " " + c.title)
-        if not c_toks:
-            return 0.0
-        # token overlap, веса по IDF
-        c_set = set(c_toks)
-        s = sum(idf.get(t, 1.0) for t in q_toks if t in c_set)
-        # буст по тегам
-        tag_hits = q_tag_set & c.tags
-        s += 4.0 * len(tag_hits)
-        # лёгкий буст коротким чанкам (плотнее по факту)
-        s *= 1.0 + 1.0 / (1.0 + math.log(1 + len(c_toks)))
-        return s
+    # Контекст диалога с пониженным весом
+    for t in ctx_toks:
+        if t in c_toks:
+            s += _W_CTX * _W_UNIGRAM * idf.get(t, 1.0)
+    for g in ctx_grams:
+        if g in c_grams:
+            s += _W_CTX * _W_BIGRAM * idf.get(g, 1.2)
 
-    # Снапшот (id=latest) приклеиваем сверху — он почти всегда нужен.
-    latest = next((c for c in chunks if c.id == "latest"), None)
-    rest = [c for c in chunks if c.id != "latest"]
-    rest.sort(key=score, reverse=True)
-    out = ([latest] if latest else []) + rest[: max(0, k - (1 if latest else 0))]
-    return out
+    return s
+
+
+def _index_chunk(c: Chunk) -> tuple[set[str], set[str], Set[str]]:
+    toks, grams = tokens_and_grams(c.title + " " + c.text)
+    # Теги чанка дополняем entity-экстракцией по его собственному тексту —
+    # на случай если в knowledge_base.py не все теги выставлены вручную.
+    auto_tags = extract_entities(c.title + " " + c.text)
+    return set(toks), set(grams), (c.tags | auto_tags)
+
+
+def _is_explicit_query(query_tags: Set[str]) -> bool:
+    """Запрос «явный» — если в нём есть конкретная сущность (год, месяц, модуль).
+    Тогда `latest`-чанк НЕ нужен принудительно."""
+    if any(t in query_tags for t in _NOW_MARKERS):
+        return True   # явно про «сейчас» → нужен latest
+    if any(t.isdigit() for t in query_tags):       # есть год
+        return True
+    if any(t in {"M1", "M2", "M3", "M4", "M5"} for t in query_tags):
+        return True
+    if any(t.startswith("kw:") for t in query_tags):
+        return False   # есть доменный ключ, но нет конкретной даты — пусть скоринг решает
+    return False
+
+
+def _mmr_select(scored: list[tuple[float, Chunk, tuple]], k: int,
+                lam: float = _MMR_LAMBDA) -> list[Chunk]:
+    """Maximal Marginal Relevance: жадно выбираем k разнообразных чанков.
+    Похожесть — по jaccard на (tokens ∪ bigrams).
+    """
+    if not scored:
+        return []
+    scored = sorted(scored, key=lambda x: -x[0])
+    selected: list[tuple[float, Chunk, tuple]] = [scored[0]]
+    remaining = scored[1:]
+
+    while remaining and len(selected) < k:
+        best, best_idx = -math.inf, -1
+        for i, (rel, _, idx) in enumerate(remaining):
+            # max схожести с уже выбранными
+            t_i = idx[0] | idx[1]
+            sim = 0.0
+            for _, _, s_idx in selected:
+                t_s = s_idx[0] | s_idx[1]
+                union = t_i | t_s
+                if union:
+                    sim = max(sim, len(t_i & t_s) / len(union))
+            mmr_score = lam * rel - (1 - lam) * sim
+            if mmr_score > best:
+                best, best_idx = mmr_score, i
+        selected.append(remaining.pop(best_idx))
+
+    return [c for _, c, _ in selected]
+
+
+def retrieve(query: str,
+             chunks: List[Chunk],
+             k: int = 6,
+             *,
+             prev_user_query: Optional[str] = None) -> List[Chunk]:
+    """Главная функция. Возвращает top-k чанков с MMR-диверсификацией.
+
+    prev_user_query — необязательный контекст диалога. Используется для
+    дополнения скоринга, НЕ для перезаписи запроса.
+    """
+    if not chunks:
+        return []
+    if not query.strip():
+        return []
+
+    idf = _build_idf(chunks)
+    q_toks, q_grams = tokens_and_grams(query)
+    q_tags = extract_entities(query)
+    ctx_toks, ctx_grams = ([], [])
+    if prev_user_query:
+        ctx_toks, ctx_grams = tokens_and_grams(prev_user_query)
+
+    explicit = _is_explicit_query(q_tags)
+
+    scored: list[tuple[float, Chunk, tuple]] = []
+    for c in chunks:
+        idx = _index_chunk(c)
+        s = _score_chunk(q_toks, q_grams, q_tags, ctx_toks, ctx_grams, idx, idf)
+        # Если запрос явно «про сейчас» — даём latest бонус,
+        # если запрос явно конкретный (дата/модуль) — снимаем форс-приоритет с latest
+        if c.id == "latest":
+            if any(t in _NOW_MARKERS for t in q_tags):
+                s += 5.0
+            elif explicit:
+                s -= 2.0     # пенальти, чтобы не вытеснять конкретный чанк
+        scored.append((s, c, idx))
+
+    # Отрезаем абсолютно нулевые скоры (несовпавшие чанки), но оставляем хотя бы
+    # один — на случай, когда запрос совсем не из домена.
+    nonzero = [t for t in scored if t[0] > 0]
+    if not nonzero:
+        return _mmr_select(scored, k=min(k, 2))   # пара дефолтных — не пусто
+
+    return _mmr_select(nonzero, k=k)

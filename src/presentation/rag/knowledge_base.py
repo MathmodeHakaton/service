@@ -99,18 +99,24 @@ _STATIC_MODULE_DOCS = [
     ),
     Chunk(
         id="lsi_method",
-        title="Методология LSI — агрегационный слой",
+        title="Методология LSI — агрегационный слой (CatBoost + SHAP)",
         text=(
-            "Архитектура LSI: 1) MAD-нормированные z-scores и флаги по 5 модулям (rolling "
-            "1 год, winsorized 1% хвосты, past-only — честный backtest); 2) CatBoost "
-            "regressor учится на ground truth из CBR bliquidity (weak target — composite "
-            "percentile-rank по 4 каналам: дефицит, шок ставки, отрыв RUONIA, недоспрос "
-            "ОФЗ); 3) SHAP per-day → contribution_M1..M5 + contribution_M4 как эффект "
-            "мультипликатора; 4) Калман 1D + гистерезис на статус (зелёный <40, "
-            "жёлтый 40-70, красный >70, переход через 3 дня подтверждения). "
-            "Метрики: holdout MAE, time-series CV (5 фолдов), sensitivity ±20%."
+            "Методология агрегации LSI и важность фич. Архитектура: "
+            "1) MAD-нормированные z-scores и флаги по 5 модулям (rolling 1 год, "
+            "winsorized 1% хвосты, past-only — честный backtest без утечки будущего); "
+            "2) CatBoost regressor учится на ground truth из CBR bliquidity "
+            "(weak target — composite percentile-rank по 4 каналам: структурный дефицит, "
+            "шок ключевой ставки, отрыв RUONIA, недоспрос ОФЗ); "
+            "3) SHAP per-day разложение прогноза → contribution_M1..M5 как вклад каждого "
+            "модуля + contribution_M4 как эффект мультипликатора. SHAP — это интерпретация "
+            "модели CatBoost: показывает, какая фича сколько пунктов LSI добавила; "
+            "4) Калман 1D + гистерезис на статус (зелёный <40, жёлтый 40-70, красный >70, "
+            "переход через 3 дня подтверждения). "
+            "Метрики качества: holdout MAE, time-series CV (5 фолдов), backtest на "
+            "стресс-эпизодах. Веса модулей не задаются вручную — они LEARNED CatBoost'ом."
         ),
-        tags={"LSI", "CatBoost", "SHAP", "методология", "MAD", "Kalman", "веса"},
+        tags={"LSI", "CatBoost", "SHAP", "методология", "агрегация",
+              "важность", "веса", "признаки", "фичи", "MAD", "Kalman", "гистерезис"},
     ),
     Chunk(
         id="thresholds",
@@ -130,35 +136,51 @@ _STATIC_MODULE_DOCS = [
 # ── Динамические факты из артефактов ──────────────────────────────────────
 
 def _year_segments(ts: pd.DataFrame) -> List[Chunk]:
-    """Годовой срез: mean/max/share_red, пики, активные модули."""
+    """Годовой срез: mean/max/share_red, пики, активные модули, разбивка по месяцам."""
     out: List[Chunk] = []
     if ts.empty or "date" not in ts.columns:
         return out
     df = ts.dropna(subset=["lsi_smoothed"]).copy()
     df["year"] = df["date"].dt.year
+    _ru_months = ["январь", "февраль", "март", "апрель", "май", "июнь",
+                  "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
     for year, sub in df.groupby("year"):
         if len(sub) < 5:
             continue
         peak = sub.loc[sub["lsi_smoothed"].idxmax()]
         share_red = float((sub["lsi_smoothed"] >= 70).mean())
         share_yellow = float(((sub["lsi_smoothed"] >= 40) & (sub["lsi_smoothed"] < 70)).mean())
+        peak_month = _ru_months[int(peak["date"].month) - 1]
         text = (
             f"{year} год — средний LSI {sub['lsi_smoothed'].mean():.1f}, "
-            f"максимум {peak['lsi_smoothed']:.1f} на дату {peak['date'].date()}. "
-            f"Дни в красной зоне: {share_red:.0%}, в жёлтой: {share_yellow:.0%}. "
+            f"максимум {peak['lsi_smoothed']:.1f} в {peak_month} ({peak['date'].date()}). "
+            f"Дни в красной зоне: {share_red:.0%}, в жёлтой: {share_yellow:.0%}."
         )
-        # Привязка к доминирующему модулю в пике
+        # Активные месяцы (где max LSI в этом месяце ≥ 40)
+        sub_m = sub.copy()
+        sub_m["month"] = sub_m["date"].dt.month
+        hot = sub_m.groupby("month")["lsi_smoothed"].max()
+        hot_months = [_ru_months[m - 1] for m in hot.index if hot[m] >= 40]
+        if hot_months:
+            text += f" Активные месяцы (max LSI ≥ 40): {', '.join(hot_months)}."
+
+        # Доминирующий модуль в пике
         contrib_cols = [c for c in sub.columns if c.startswith("contribution_M")]
         if contrib_cols and pd.notna(peak.get(contrib_cols[0])):
             peak_contribs = {c.replace("contribution_", ""): float(peak[c] or 0.0)
                              for c in contrib_cols}
             top = max(peak_contribs.items(), key=lambda x: x[1])
-            text += f"В пике основной драйвер — {top[0]} (SHAP {top[1]:+.1f})."
+            text += f" В пике основной драйвер — {top[0]} (SHAP {top[1]:+.1f})."
+
+        # Теги: год + название месяца пика + сам месяц короткий код
+        _m_codes = ["jan", "feb", "mar", "apr", "may", "jun",
+                    "jul", "aug", "sep", "oct", "nov", "dec"]
+        peak_code = _m_codes[int(peak["date"].month) - 1]
         out.append(Chunk(
             id=f"yr_{year}",
             title=f"LSI за {year} год",
             text=text,
-            tags={str(year), "год", "история"},
+            tags={str(year), "год", "история", peak_month, peak_code},
             kind="segment",
         ))
     return out
@@ -166,20 +188,33 @@ def _year_segments(ts: pd.DataFrame) -> List[Chunk]:
 
 def _crisis_episodes(backtest: pd.DataFrame) -> List[Chunk]:
     out: List[Chunk] = []
+    _ru_months_full = ["январь", "февраль", "март", "апрель", "май", "июнь",
+                       "июль", "август", "сентябрь", "октябрь", "ноябрь", "декабрь"]
+    _m_codes = ["jan", "feb", "mar", "apr", "may", "jun",
+                "jul", "aug", "sep", "oct", "nov", "dec"]
     for _, row in backtest.iterrows():
         ep = str(row.get("episode", ""))
         verdict = str(row.get("verdict", ""))
+        start = pd.to_datetime(row.get("start"), errors="coerce")
+        end = pd.to_datetime(row.get("end"), errors="coerce")
+        months_human, month_codes, years = [], set(), set()
+        if pd.notna(start) and pd.notna(end):
+            cur = start
+            while cur <= end:
+                months_human.append(_ru_months_full[cur.month - 1])
+                month_codes.add(_m_codes[cur.month - 1])
+                years.add(str(cur.year))
+                # шаг на 1 месяц
+                cur = (cur + pd.offsets.MonthBegin(1))
+        period_human = (" – ".join(dict.fromkeys(months_human))
+                        + (f" {sorted(years)[0]}" if years else ""))
         text = (
-            f"Эпизод {ep} ({row.get('start')} — {row.get('end')}): "
+            f"Кризис-эпизод {ep} ({period_human}, {row.get('start')} — {row.get('end')}): "
             f"средний LSI {row.get('mean_lsi')}, максимум {row.get('max_lsi')}, "
             f"доля красных дней {row.get('share_red')}. Вердикт модели: {verdict}."
         )
-        tags = {"backtest", "кризис", ep}
-        # Подтянем годы из дат
-        for key in ("start", "end"):
-            d = str(row.get(key, ""))[:4]
-            if d.isdigit():
-                tags.add(d)
+        tags = {"backtest", "кризис", ep, *years, *month_codes,
+                *dict.fromkeys(months_human)}
         out.append(Chunk(id=f"ep_{ep}", title=f"Кризис · {ep}",
                          text=text, tags=tags, kind="event"))
     return out

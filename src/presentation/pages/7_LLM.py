@@ -10,11 +10,14 @@ LLM Аналитик — RAG-чат по данным системы (YandexGPT 
 Off-topic-вопросы блокируются строгим system-промптом.
 """
 from __future__ import annotations
+from src.presentation.rag.query_rewrite import needs_rewrite, rewrite_query
+import time
+from src.presentation.rag.chat_llm import call_chat
 from src.presentation.rag.guardrails import (
     CANONICAL_REFUSAL, is_prompt_injection, looks_like_refusal,
     filter_history_for_llm,
 )
-from src.presentation.rag.chat_llm import call_chat
+from src.presentation.rag.chat_llm import call_chat, build_system_prompt
 from src.presentation.rag.retriever import retrieve
 from src.presentation.rag.knowledge_base import build_knowledge_base
 from config.settings import get_settings
@@ -24,13 +27,15 @@ import pandas as pd
 import sys
 from pathlib import Path
 from datetime import datetime
-import time
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 
 st.set_page_config(page_title="LLM · Аналитик", page_icon="💬", layout="wide")
 
+
+# Сколько последних реплик отдаём в LLM. Защита от раздувания контекста.
+HISTORY_TURNS_FOR_LLM = 6
 
 settings = get_settings()
 creds_ok = bool(settings.yandex_api_key and settings.yandex_folder_id)
@@ -156,48 +161,83 @@ if prompt:
     if not creds_ok:
         st.error("Не заданы YANDEX_API_KEY и YANDEX_FOLDER_ID — чат отключён. "
                  "Добавьте их в `.env` или переменные окружения.")
+    elif is_prompt_injection(prompt):
+        # Инъекции/jailbreak не попадают в историю — ни запрос, ни отказ.
+        # Канонический ответ показываем разово, контекст диалога остаётся чистым.
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        with st.chat_message("assistant"):
+            st.markdown(CANONICAL_REFUSAL)
+            st.caption("🛡 Заблокировано локальным guardrail (prompt-injection). "
+                       "В историю не сохранено.")
     else:
         st.session_state.chat_history.append(
             {"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        # 1) Локальный guardrail: явные prompt-injection / jailbreak ловим без LLM.
-        if is_prompt_injection(prompt):
-            answer = CANONICAL_REFUSAL
-            refused = True
-            retrieved = []
+        # 1) Query rewrite: если запрос короткий/ссылочный — переписываем
+        # через LLM, опираясь на предыдущие реплики пользователя.
+        prev_user_turns = [m["content"] for m in st.session_state.chat_history[:-1]
+                           if m.get("role") == "user"]
+        if needs_rewrite(prompt) and prev_user_turns:
+            search_query = rewrite_query(prompt, prev_user_turns)
         else:
-            retrieved = retrieve(prompt, chunks, k=top_k)
-            # 2) В LLM шлём отфильтрованную историю — без прежних отказов и их триггеров.
-            clean_history = filter_history_for_llm(
-                st.session_state.chat_history)
-            with st.chat_message("assistant"):
-                placeholder = st.empty()
-                placeholder.markdown("_думаю…_")
-                try:
-                    answer = call_chat(
-                        messages=clean_history,
-                        chunks=retrieved,
-                        temperature=0.0,
-                    )
-                except Exception as e:
-                    answer = f"⚠ Ошибка Yandex API: {e}"
-                    refused = False
-                else:
-                    # 3) Если ответ выглядит как отказ — помечаем, чтобы выкинуть из истории на след. шаге.
-                    refused = looks_like_refusal(answer)
-                placeholder.markdown(answer)
-                with st.expander("🔍 RAG-контекст этого ответа"):
-                    for c in retrieved:
-                        st.write(f"• {c.title}")
+            search_query = prompt
 
-        # Если отказ пришёл от guardrail (LLM не вызывали) — отдельная отрисовка.
-        if not retrieved:
-            with st.chat_message("assistant"):
-                st.markdown(answer)
-                st.caption(
-                    "🛡 Заблокировано локальным guardrail (prompt-injection).")
+        # 2) Retrieve по переписанному запросу, плюс «контекст диалога» (предыдущая
+        # пользовательская реплика) с пониженным весом — для бустинга сущностей.
+        prev_q = prev_user_turns[-1] if prev_user_turns else None
+        retrieved = retrieve(search_query, chunks,
+                             k=top_k, prev_user_query=prev_q)
+
+        # 3) История для LLM — отфильтрованная от refusal-пар + ограниченная по длине.
+        clean_history = filter_history_for_llm(st.session_state.chat_history)
+        if len(clean_history) > HISTORY_TURNS_FOR_LLM:
+            clean_history = clean_history[-HISTORY_TURNS_FOR_LLM:]
+
+        sent_system_prompt = build_system_prompt(retrieved)
+
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
+            placeholder.markdown("_думаю…_")
+            try:
+                answer = call_chat(
+                    messages=clean_history,
+                    chunks=retrieved,
+                    temperature=0.0,
+                )
+            except Exception as e:
+                answer = f"⚠ Ошибка Yandex API: {e}"
+                refused = False
+            else:
+                refused = looks_like_refusal(answer)
+            placeholder.markdown(answer)
+
+            with st.expander("🔍 RAG-контекст этого ответа"):
+                for c in retrieved:
+                    st.write(f"• {c.title}")
+
+            with st.expander("🩺 Debug: что реально ушло в LLM"):
+                if search_query != prompt:
+                    st.markdown(
+                        f"**Query rewrite:** `{prompt}` → `{search_query}`")
+                st.markdown(
+                    f"**Извлечено чанков:** {len(retrieved)} / запрошено {top_k}")
+                st.markdown(f"**Помечен как refused:** `{refused}`")
+                st.markdown("**Чанки (title · kind · tags · превью):**")
+                for i, c in enumerate(retrieved, 1):
+                    tags = ", ".join(sorted(c.tags)) or "—"
+                    preview = (c.text or "").strip().replace("\n", " ")
+                    if len(preview) > 240:
+                        preview = preview[:240] + "…"
+                    st.write(
+                        f"{i}. **{c.title}**  ·  *{c.kind}*  ·  tags: `{tags}`")
+                    st.caption(preview)
+                st.markdown("**Filtered history (отправлено в LLM):**")
+                st.json(clean_history)
+                st.markdown("**System prompt (с подставленным контекстом):**")
+                st.code(sent_system_prompt, language="markdown")
 
         st.session_state.chat_history.append({
             "role": "assistant",
