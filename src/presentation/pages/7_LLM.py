@@ -39,48 +39,53 @@ st.title("LLM — AI Аналитик")
 st.caption("RAG-чат по артефактам модели и описаниям модулей. "
            "Отвечает строго по документам системы.")
 
-# ── Анимация загрузки ──────────────────────────────────────────────────────
-placeholder_loading = st.empty()
-with placeholder_loading.container():
-    col1, col2, col3 = st.columns([1, 2, 1], vertical_alignment="center")
-    with col2:
-        st.markdown("""
-        <div style="text-align: center; padding: 30px;">
-            <div style="font-size: 48px; margin-bottom: 20px; animation: spin 2s linear infinite;">⚡</div>
-            <h3>Инициализация LLM Аналитика...</h3>
-            <div style="margin-top: 20px;">
-                <div style="
-                    width: 100%;
-                    height: 8px;
-                    background: #e0e0e0;
-                    border-radius: 4px;
-                    overflow: hidden;
-                ">
+# ── Анимация загрузки (только в начале) ────────────────────────────────────
+if "loading_shown" not in st.session_state:
+    st.session_state.loading_shown = False
+
+if not st.session_state.loading_shown:
+    placeholder_loading = st.empty()
+    with placeholder_loading.container():
+        col1, col2, col3 = st.columns([1, 2, 1], vertical_alignment="center")
+        with col2:
+            st.markdown("""
+            <div style="text-align: center; padding: 30px;">
+                <div style="font-size: 48px; margin-bottom: 20px; animation: spin 2s linear infinite;">⚡</div>
+                <h3>Инициализация LLM Аналитика...</h3>
+                <div style="margin-top: 20px;">
                     <div style="
                         width: 100%;
-                        height: 100%;
-                        background: linear-gradient(90deg, #4CAF50, #45a049);
-                        animation: progress 3s ease-in-out forwards;
-                    "></div>
+                        height: 8px;
+                        background: #e0e0e0;
+                        border-radius: 4px;
+                        overflow: hidden;
+                    ">
+                        <div style="
+                            width: 100%;
+                            height: 100%;
+                            background: linear-gradient(90deg, #4CAF50, #45a049);
+                            animation: progress 3s ease-in-out forwards;
+                        "></div>
+                    </div>
                 </div>
+                <p style="margin-top: 20px; color: #666;">Загружаю модель и knowledge base...</p>
             </div>
-            <p style="margin-top: 20px; color: #666;">Загружаю модель и knowledge base...</p>
-        </div>
-        <style>
-            @keyframes progress {
-                0% { width: 0%; }
-                50% { width: 70%; }
-                100% { width: 100%; }
-            }
-            @keyframes spin {
-                0% { transform: rotate(0deg); }
-                100% { transform: rotate(360deg); }
-            }
-        </style>
-        """, unsafe_allow_html=True)
-    time.sleep(3)
+            <style>
+                @keyframes progress {
+                    0% { width: 0%; }
+                    50% { width: 70%; }
+                    100% { width: 100%; }
+                }
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+            </style>
+            """, unsafe_allow_html=True)
+        time.sleep(3)
 
-placeholder_loading.empty()
+    placeholder_loading.empty()
+    st.session_state.loading_shown = True
 
 
 # ── KB ────────────────────────────────────────────────────────────────────
