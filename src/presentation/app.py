@@ -201,19 +201,19 @@ st.subheader("🔗 Анализ модулей")
 nav_cols = st.columns(6)
 with nav_cols[0]:
     if st.button("📈 М1 · Резервы", use_container_width=True):
-        st.switch_page("pages/1_М1.py")
+        st.switch_page("pages/1_M1.py")
 with nav_cols[1]:
     if st.button("💰 М2 · Репо", use_container_width=True):
-        st.switch_page("pages/2_М2.py")
+        st.switch_page("pages/2_M2.py")
 with nav_cols[2]:
     if st.button("📋 М3 · ОФЗ", use_container_width=True):
-        st.switch_page("pages/3_М3.py")
+        st.switch_page("pages/3_M3.py")
 with nav_cols[3]:
     if st.button("📅 М4 · Налоги", use_container_width=True):
-        st.switch_page("pages/4_М4.py")
+        st.switch_page("pages/4_M4.py")
 with nav_cols[4]:
     if st.button("🏦 М5 · Казначейство", use_container_width=True):
-        st.switch_page("pages/5_М5.py")
+        st.switch_page("pages/5_M5.py")
 with nav_cols[5]:
     if st.button("🤖 Спросить LLM", use_container_width=True, type="secondary"):
         st.switch_page("pages/7_LLM.py")
