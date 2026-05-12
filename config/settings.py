@@ -12,7 +12,8 @@ class Settings(BaseSettings):
 
     # Database
     database_url: str = os.getenv(
-        "DATABASE_URL", "postgresql://localhost:5432/postgres")
+        "DATABASE_URL", "postgresql://localhost:5432/postgres"
+    )
 
     # APIs
     cbr_api_base_url: str = "https://www.cbr.ru/dev/api/"
@@ -31,7 +32,7 @@ class Settings(BaseSettings):
     # Имя модели задаётся в формате "<name>/<version>", URL строится как
     # gpt://{folder_id}/<name>/<version>
     yandex_model_commentary: str = "yandexgpt-5-lite/latest"  # автокомментарий
-    yandex_model_chat: str = "yandexgpt-5-lite/latest"         # RAG-чат
+    yandex_model_chat: str = "yandexgpt-5-pro/latest"  # RAG-чат
     yandex_base_url: str = "https://ai.api.cloud.yandex.net/v1"
 
     # Logging

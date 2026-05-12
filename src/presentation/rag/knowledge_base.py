@@ -21,6 +21,7 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[3]
 ART = ROOT / "data" / "model_artifacts"
+SIGNAL_DATA = ROOT / "ml_model" / "data"   # сырые сигналы парсеров
 
 
 @dataclass
@@ -289,6 +290,202 @@ def _feat_importance(feat_imp: pd.DataFrame, n: int = 8) -> Chunk:
                  kind="fact")
 
 
+# ── Сигнальные чанки: сырые ряды по годам ─────────────────────────────────
+#
+# Зачем: KB по умолчанию знает только агрегаты LSI и описания модулей.
+# Когда пользователь спрашивает «какая RUONIA была в 2022» — в чанках до этого
+# не было НИ ОДНОГО значения RUONIA, и LLM честно отвечала «нет в данных».
+# Эти функции читают сырые CSV из ml_model/data/ и кладут в KB по одному чанку
+# на (источник × год) с mean/min/max + датами экстремумов.
+
+def _year_stats(values: pd.Series, dates: pd.Series) -> dict:
+    """Базовая статистика за год: mean/min/max + ISO-даты экстремумов."""
+    s = pd.to_numeric(values, errors="coerce")
+    mask = s.notna()
+    if not mask.any():
+        return {}
+    s_v = s[mask]
+    d_v = pd.to_datetime(dates[mask], errors="coerce")
+    return {
+        "mean": float(s_v.mean()),
+        "min":  float(s_v.min()),
+        "max":  float(s_v.max()),
+        "min_date": d_v.loc[s_v.idxmin()].date().isoformat(),
+        "max_date": d_v.loc[s_v.idxmax()].date().isoformat(),
+        "n":   int(mask.sum()),
+    }
+
+
+def _signal_year_chunks(
+    *,
+    df: pd.DataFrame,
+    value_col: str,
+    name: str,
+    module: str,
+    unit: str,
+    short_id: str,
+    extra_tags: Set[str],
+    direction_hint: str = "выше — стрессовее",
+) -> List[Chunk]:
+    """Создаёт по чанку на каждый год + сводный чанк за всю историю."""
+    out: List[Chunk] = []
+    if df.empty or value_col not in df.columns or "date" not in df.columns:
+        return out
+    df = df.copy()
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.dropna(subset=["date"]).sort_values("date")
+    df["year"] = df["date"].dt.year
+
+    # Лайфтайм-сводка
+    lt = _year_stats(df[value_col], df["date"])
+    if lt:
+        out.append(Chunk(
+            id=f"sig_{short_id}_lifetime",
+            title=f"{name} · вся история ({df['year'].min()}–{df['year'].max()})",
+            text=(
+                f"{name} за всю историю наблюдений: "
+                f"среднее {lt['mean']:.2f} {unit}, "
+                f"минимум {lt['min']:.2f} {unit} ({lt['min_date']}), "
+                f"максимум {lt['max']:.2f} {unit} ({lt['max_date']}). "
+                f"Наблюдений: {lt['n']}. Направление стресса: {direction_hint}."
+            ),
+            tags={module, "история", short_id, *extra_tags},
+            kind="signal",
+        ))
+
+    # Чанки по годам
+    for year, sub in df.groupby("year"):
+        st = _year_stats(sub[value_col], sub["date"])
+        if not st or st["n"] < 5:
+            continue
+        out.append(Chunk(
+            id=f"sig_{short_id}_{int(year)}",
+            title=f"{name} · {int(year)}",
+            text=(
+                f"{name} в {int(year)} году: "
+                f"среднее {st['mean']:.2f} {unit}, "
+                f"минимум {st['min']:.2f} {unit} ({st['min_date']}), "
+                f"максимум {st['max']:.2f} {unit} ({st['max_date']}). "
+                f"Наблюдений за год: {st['n']}."
+            ),
+            tags={str(int(year)), module, short_id, *extra_tags},
+            kind="signal",
+        ))
+    return out
+
+
+def _build_signal_chunks() -> List[Chunk]:
+    """Сводит все сырые сигналы в чанки. Каждый источник читается отдельно,
+    падать на отсутствии файла не должно — просто пропускаем."""
+    out: List[Chunk] = []
+
+    def _safe_read(name: str) -> pd.DataFrame:
+        p = SIGNAL_DATA / name
+        try:
+            return pd.read_csv(p) if p.exists() else pd.DataFrame()
+        except Exception:
+            return pd.DataFrame()
+
+    # M1 · RUONIA
+    out.extend(_signal_year_chunks(
+        df=_safe_read("m1_ruonia.csv"),
+        value_col="ruonia", name="RUONIA (ставка межбанка)",
+        module="M1", unit="% год.", short_id="ruonia",
+        extra_tags={"RUONIA", "ruonia", "ставка", "межбанк"},
+        direction_hint="выше ключевой — стресс",
+    ))
+
+    # M1 · спред резервов (factual − required)
+    res = _safe_read("m1_reserves.csv")
+    if not res.empty and {"actual_avg_bln", "required_avg_bln"} <= set(res.columns):
+        res["spread_bln"] = pd.to_numeric(res["actual_avg_bln"], errors="coerce") \
+                          - pd.to_numeric(res["required_avg_bln"], errors="coerce")
+        out.extend(_signal_year_chunks(
+            df=res, value_col="spread_bln",
+            name="Спред резервов (факт − норматив)",
+            module="M1", unit="млрд руб.", short_id="reserve_spread",
+            extra_tags={"резерв", "корсчёт", "спред", "усреднение"},
+            direction_hint="большой плюс в конце периода — стресс",
+        ))
+
+    # M2 · ключевая ставка
+    out.extend(_signal_year_chunks(
+        df=_safe_read("m2_keyrate.csv"),
+        value_col="keyrate", name="Ключевая ставка ЦБ",
+        module="M2", unit="% год.", short_id="keyrate",
+        extra_tags={"ключевая", "keyrate", "ставка", "ЦБ"},
+        direction_hint="резкий рост — шок ликвидности",
+    ))
+
+    # M2 · ставка репо аукционов (rate_wavg, агрегируем по дню)
+    repo = _safe_read("m2_repo_auctions.csv")
+    if not repo.empty and "rate_wavg" in repo.columns:
+        repo["date"] = pd.to_datetime(repo["date"], errors="coerce")
+        # фокус — 7-дневные аукционы (основной инструмент по ТЗ)
+        if "term_days" in repo.columns:
+            repo = repo[pd.to_numeric(repo["term_days"], errors="coerce") == 7]
+        out.extend(_signal_year_chunks(
+            df=repo, value_col="rate_wavg",
+            name="Средневзв. ставка репо ЦБ (7д)",
+            module="M2", unit="% год.", short_id="repo_rate",
+            extra_tags={"репо", "ставка", "аукцион"},
+            direction_hint="выше верхней границы коридора — стресс",
+        ))
+
+    # M3 · ОФЗ cover ratio и доходность (кириллические колонки + BOM в первой)
+    ofz = _safe_read("m3_ofz_full.csv")
+    if not ofz.empty:
+        def _norm(c: str) -> str:
+            return c.replace("﻿", "").strip().lower()
+
+        col_date = next((c for c in ofz.columns if _norm(c) in ("дата", "date")), None)
+        col_cover = next((c for c in ofz.columns
+                          if "cover ratio" in _norm(c)), None)
+        col_yield = next((c for c in ofz.columns
+                          if "доходность средневз" in _norm(c)
+                          or "avg_yield" in _norm(c)), None)
+        if col_date and col_cover:
+            ofz = ofz.rename(columns={col_date: "date"})
+            out.extend(_signal_year_chunks(
+                df=ofz, value_col=col_cover,
+                name="Cover ratio ОФЗ-аукционов",
+                module="M3", unit="", short_id="ofz_cover",
+                extra_tags={"ОФЗ", "ofz", "cover", "аукцион", "Минфин"},
+                direction_hint="ниже 1.2 — недоспрос (стресс)",
+            ))
+        if col_date and col_yield:
+            ofz = ofz.rename(columns={col_date: "date"})
+            out.extend(_signal_year_chunks(
+                df=ofz, value_col=col_yield,
+                name="Средневзв. доходность ОФЗ",
+                module="M3", unit="% год.", short_id="ofz_yield",
+                extra_tags={"ОФЗ", "ofz", "доходность", "yield"},
+                direction_hint="резкий рост — давление на размещение",
+            ))
+
+    # M5 · структурный баланс ликвидности
+    out.extend(_signal_year_chunks(
+        df=_safe_read("m5_bliquidity.csv"),
+        value_col="structural_balance_bln",
+        name="Структурный баланс ликвидности банков",
+        module="M5", unit="млрд руб.", short_id="bliq",
+        extra_tags={"баланс", "структурный", "ликвидность", "корсчёт"},
+        direction_hint="отрицательный — дефицит (стресс)",
+    ))
+
+    # M5 · средства Федерального казначейства
+    out.extend(_signal_year_chunks(
+        df=_safe_read("m5_sors_federal_funds.csv"),
+        value_col="federal_funds_on_banks_bln",
+        name="Средства казначейства на счетах банков",
+        module="M5", unit="млрд руб.", short_id="treasury",
+        extra_tags={"казначейство", "ЕКС", "бюджет"},
+        direction_hint="резкое падение — отток ликвидности",
+    ))
+
+    return out
+
+
 def _tax_calendar(tax_df: Optional[pd.DataFrame]) -> Optional[Chunk]:
     if tax_df is None or tax_df.empty:
         return None
@@ -343,5 +540,10 @@ def build_knowledge_base(tax_df: Optional[pd.DataFrame] = None) -> List[Chunk]:
     tax_chunk = _tax_calendar(tax_df)
     if tax_chunk:
         chunks.append(tax_chunk)
+
+    # Сырые сигналы по годам: RUONIA, ключевая, репо-ставка, ОФЗ cover/доходность,
+    # структурный баланс, казначейство. Один источник = lifetime-чанк + по чанку
+    # на каждый год с mean/min/max + датами экстремумов.
+    chunks.extend(_build_signal_chunks())
 
     return chunks
