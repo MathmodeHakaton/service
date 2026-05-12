@@ -22,23 +22,21 @@ df2 = r2["signals_df"]
 
 st.caption("Источник: ЦБ РФ — RUONIA vs ключевая ставка")
 
-ROOT = Path(__file__).parent.parent.parent.parent
+ruonia = r2.get("ruonia", pd.DataFrame()).copy()
+keyrate = r2.get("keyrate", pd.DataFrame()).copy()
 
-# Загружаем данные
-try:
-    ruonia = pd.read_csv(ROOT / "cache/cbr/ruonia.csv",   parse_dates=["date"])
-    keyrate = pd.read_csv(ROOT / "cache/cbr/keyrate.csv",
-                          parse_dates=["date"])
-    kr = keyrate.sort_values("date").set_index("date")["keyrate"]
-    ruonia["rate_spread"] = ruonia["ruonia"] - ruonia["date"].map(
-        lambda d: kr.asof(d) if d >= kr.index.min() else np.nan)
-    ruonia = ruonia[ruonia["date"] >=
-                    "2013-09-13"].dropna(subset=["rate_spread"])
-    has_data = True
-except Exception:
-    has_data = False
+if ruonia.empty or keyrate.empty:
     st.error("Нет данных RUONIA")
     st.stop()
+
+ruonia["date"] = pd.to_datetime(ruonia["date"])
+keyrate["date"] = pd.to_datetime(keyrate["date"])
+
+kr = keyrate.sort_values("date").set_index("date")["keyrate"]
+ruonia["rate_spread"] = ruonia["ruonia"] - ruonia["date"].map(
+    lambda d: kr.asof(d) if d >= kr.index.min() else np.nan)
+ruonia = ruonia[ruonia["date"] >=
+                "2013-09-13"].dropna(subset=["rate_spread"])
 
 # Выбор периода
 st.markdown("### Выберите период")

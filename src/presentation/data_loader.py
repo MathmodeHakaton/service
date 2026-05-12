@@ -116,7 +116,12 @@ def load_all():
         }
 
         r1 = {"signals_df": df1, "latest": l1}
-        r2 = {"signals_df": df2, "latest": l2}
+        r2 = {
+            "signals_df": df2,
+            "latest": l2,
+            "ruonia": data.get("ruonia", pd.DataFrame()),
+            "keyrate": data.get("keyrate", pd.DataFrame()),
+        }
         r3 = {"signals_df": df3 if df3 is not None else pd.DataFrame(),
               "latest": l3}
         r4 = {"signals_df": df4, "latest": latest_m4, "tax_df": tax_df}
