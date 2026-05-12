@@ -29,41 +29,65 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+
 @st.cache_data(ttl=1800)
 def load_all():
-    from src.application.pipeline import Pipeline
-    from src.domain.aggregation.lsi_engine import LSIEngine
-    from src.infrastructure.storage.db.engine import get_session
-    from datetime import datetime
+    """Load LSI data from model artifacts CSV (single source of truth)"""
+    from pathlib import Path
 
-    session = get_session()
-    try:
-        p = Pipeline(session=session)
-        result = p.execute_full()
-        data = result.raw_data
-        lsi_result = result.lsi
+    root = Path(__file__).resolve().parents[3]
+    artifacts_dir = root / "data" / "model_artifacts"
+    csv_path = artifacts_dir / "lsi_dashboard_extract.csv"
 
-        engine = LSIEngine()
+    if not csv_path.exists():
+        raise FileNotFoundError(
+            f"LSI artifacts not found: {csv_path}. "
+            f"Run: python -c 'from src.application.lsi_refresh import refresh_lsi; refresh_lsi()'"
+        )
 
-        lsi = {
-            "lsi":           round(lsi_result.value * 100, 1),
-            "status":        {"normal": "GREEN", "warning": "YELLOW",
-                              "critical": "RED"}.get(lsi_result.status, "GREEN"),
-            "contributions": {k: round(v * 100, 2) for k, v in lsi_result.contributions.items()},
-            "scores":        {
-                "M1": round(result.lsi.contributions.get("M1_RESERVES", 0) * 100, 1),
-                "M2": round(result.lsi.contributions.get("M2_REPO", 0) * 100, 1),
-                "M3": round(result.lsi.contributions.get("M3_OFZ", 0) * 100, 1),
-                "M4": round(result.lsi.contributions.get("M4_TAX", 0) * 100, 1),
-                "M5": round(result.lsi.contributions.get("M5_TREASURY", 0) * 100, 1),
-            },
-            "seasonal_factor": float(data.get("m4_multiplier", 1.0) or 1.0),
-            "computed_at":   pd.Timestamp.now().strftime("%Y-%m-%d %H:%M"),
-        }
+    extract = pd.read_csv(csv_path, parse_dates=["date"])
 
-        return lsi
-    finally:
-        session.close()
+    # Get latest valid row (or fallback to latest if all invalid)
+    valid = extract[extract["full_model_valid"] == 1]
+    latest = valid.iloc[-1] if not valid.empty else extract.iloc[-1]
+
+    # Extract values from CSV row (same logic as LSI page)
+    lsi_val = float(latest.get("lsi") if pd.notna(latest.get("lsi"))
+                    else latest.get("lsi_smoothed", 0.0))
+    status_raw = str(latest.get("status", "green")).lower()
+    m4_mult = float(latest.get("m4_multiplier", 1.0) or 1.0)
+    date_str = pd.Timestamp(latest["date"]).strftime("%Y-%m-%d %H:%M")
+
+    # Map CSV status to app status format
+    status_map = {"green": "GREEN", "yellow": "YELLOW",
+                  "red": "RED", "partial": "YELLOW"}
+    app_status = status_map.get(status_raw, "GREEN")
+
+    # Extract contributions (CSV uses "contribution_M1" format, scale to 0-100)
+    contributions = {
+        "M1_RESERVES": float(latest.get("contribution_M1", 0.0) or 0.0) * 100,
+        "M2_REPO": float(latest.get("contribution_M2", 0.0) or 0.0) * 100,
+        "M3_OFZ": float(latest.get("contribution_M3", 0.0) or 0.0) * 100,
+        "M4_TAX": float(latest.get("contribution_M4", 0.0) or 0.0) * 100,
+        "M5_TREASURY": float(latest.get("contribution_M5", 0.0) or 0.0) * 100,
+    }
+
+    lsi = {
+        "lsi": round(lsi_val * 100, 1),
+        "status": app_status,
+        "contributions": {k: round(v, 2) for k, v in contributions.items()},
+        "scores": {
+            "M1": round(contributions.get("M1_RESERVES", 0) / 100 * 100, 1),
+            "M2": round(contributions.get("M2_REPO", 0) / 100 * 100, 1),
+            "M3": round(contributions.get("M3_OFZ", 0) / 100 * 100, 1),
+            "M4": round(contributions.get("M4_TAX", 0) / 100 * 100, 1),
+            "M5": round(contributions.get("M5_TREASURY", 0) / 100 * 100, 1),
+        },
+        "seasonal_factor": m4_mult,
+        "computed_at": date_str,
+    }
+
+    return lsi
 
 
 def status_color(status):
@@ -111,7 +135,8 @@ if not load_ok:
     st.stop()
 
 st.title("🇷🇺 RU Liquidity Sentinel")
-st.caption(f"Обновлено: {lsi['computed_at']}  |  Источники: ЦБ РФ · Минфин · ФНС")
+st.caption(
+    f"Обновлено: {lsi['computed_at']}  |  Источники: ЦБ РФ · Минфин · ФНС")
 
 col_lsi, col_sf, col_status = st.columns([2, 1, 1])
 
@@ -120,8 +145,9 @@ with col_lsi:
 
 with col_sf:
     sf = lsi["seasonal_factor"]
-    sf_labels = {1.4: "Конец квартала", 1.2: "Конец месяца", 1.1: "Налоговая неделя"}
-    sf_label  = next((v for k, v in sf_labels.items() if sf >= k), "Норма")
+    sf_labels = {1.4: "Конец квартала",
+                 1.2: "Конец месяца", 1.1: "Налоговая неделя"}
+    sf_label = next((v for k, v in sf_labels.items() if sf >= k), "Норма")
     st.metric("Сезонный коэффициент", f"×{sf:.2f}")
     if sf >= 1.4:
         st.error(f"⚠ {sf_label}")
@@ -134,7 +160,7 @@ with col_sf:
 
 with col_status:
     color = status_color(lsi["status"])
-    icon  = "🟢" if lsi["status"] == "GREEN" else "🟡" if lsi["status"] == "YELLOW" else "🔴"
+    icon = "🟢" if lsi["status"] == "GREEN" else "🟡" if lsi["status"] == "YELLOW" else "🔴"
     st.markdown(f"""
     <div style="background:{color};color:white;padding:24px 16px;
                 border-radius:12px;text-align:center;margin-top:10px;">
@@ -179,12 +205,14 @@ for col, mk in zip(cols, ["M1", "M2", "M3", "M4", "M5"]):
         </div>
         """, unsafe_allow_html=True)
 
-contrib_vals = [lsi["contributions"].get(CONTRIB_KEY[mk], 0) or 0 for mk in ["M1", "M2", "M3", "M4", "M5"]]
+contrib_vals = [lsi["contributions"].get(CONTRIB_KEY[mk], 0) or 0 for mk in [
+    "M1", "M2", "M3", "M4", "M5"]]
 fig_bar = go.Figure(go.Bar(
     x=["M1", "M2", "M3", "M4", "M5"],
     y=contrib_vals,
     marker_color=[
-        "#27ae60" if (scores.get(k, 0) or 0) < 40 else "#f39c12" if (scores.get(k, 0) or 0) < 70 else "#e74c3c"
+        "#27ae60" if (scores.get(k, 0) or 0) < 40 else "#f39c12" if (
+            scores.get(k, 0) or 0) < 70 else "#e74c3c"
         for k in ["M1", "M2", "M3", "M4", "M5"]
     ],
     text=[f"{v:.1f}" for v in contrib_vals],
@@ -219,4 +247,5 @@ with nav_cols[5]:
         st.switch_page("pages/7_LLM.py")
 
 st.divider()
-st.caption("💡 Выберите модуль для детального анализа или задайте вопрос AI аналитику")
+st.caption(
+    "💡 Выберите модуль для детального анализа или задайте вопрос AI аналитику")
